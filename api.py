@@ -157,6 +157,7 @@ def _persist_advanced_result(
 ) -> tuple[int, dict | None]:
     matched_product = db.match_product(identification.get("object"))
     image_key = _upload_event_image(image)
+    hazard_flag = identification.get("hazard_flag")
     event_id = db.insert_waste_event(
         detected_object=identification.get("object"),
         material=identification.get("material"),
@@ -166,6 +167,10 @@ def _persist_advanced_result(
         image_key=image_key,
         product_id=matched_product["product_id"] if matched_product else None,
         created_at=captured_at,
+        hazard_flag=1 if hazard_flag is True else (0 if hazard_flag is False else None),
+        hazard_reason=identification.get("hazard_reason"),
+        visible_text=identification.get("visible_text"),
+        reusable_condition=identification.get("reusable_condition"),
     )
     return event_id, matched_product
 

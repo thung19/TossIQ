@@ -201,6 +201,11 @@
     display: flex; align-items: center; justify-content: center;
     font-size: 16px;
   }
+  .hazard-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    color: var(--status-critical); font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.03em;
+  }
 </style>
 </head>
 <body>
@@ -638,7 +643,7 @@ async function refreshEvents() {
       <td>${e.image_url
         ? `<img class="event-thumb" src="${escapeHtml(e.image_url)}" alt="">`
         : '<div class="event-thumb-placeholder">&mdash;</div>'}</td>
-      <td>${escapeHtml(e.detected_object) || '&mdash;'}</td>
+      <td>${escapeHtml(e.detected_object) || '&mdash;'}${e.hazard_flag ? ` <span class="hazard-badge" title="${escapeHtml(e.hazard_reason) || 'Potential hazard'}">&#9888; Hazard</span>` : ''}</td>
       <td><span class="cat-label"><span class="cat-dot cat-${normalizeCategory(e.category)}"></span>${escapeHtml(e.category) || 'unknown'}</span></td>
       <td>${escapeHtml(e.location) || '&mdash;'}</td>
       <td>${escapeHtml(e.created_at)}</td>

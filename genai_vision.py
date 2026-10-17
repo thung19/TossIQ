@@ -66,7 +66,11 @@ Return ONLY valid JSON with these fields:
   "object": "short name of the object, e.g. 'plastic water bottle'",
   "material": "one of: plastic, metal, glass, paper, cardboard, organic, other -- or null if you cannot tell",
   "material_subtype": "a more specific material if visually identifiable, e.g. 'PET', 'HDPE', 'aluminum', 'steel', 'corrugated cardboard' -- or null if you cannot tell",
-  "food_contaminated": true if the item has visible food or liquid residue on it, false if it looks clean, or null if you cannot tell
+  "food_contaminated": true if the item has visible food or liquid residue on it, false if it looks clean, or null if you cannot tell,
+  "hazard_flag": true if you see a visible battery compartment, chemical or hazard warning symbol, sharps, or similar hazard indicator, false if you see none, or null if genuinely unclear from the image,
+  "hazard_reason": "a short description of what hazard indicator you saw if hazard_flag is true, or null otherwise",
+  "visible_text": "any readable brand name, product name, or label text visible on the item, or null if none is visible or legible",
+  "reusable_condition": "one of: intact, damaged, depleted -- intact means it looks unused/undamaged and plausibly reusable, damaged means it is visibly broken or torn, depleted means it is visibly empty or used up (e.g. an empty bottle vs. a full one) -- or null if not visually determinable"
 }
 
 Only describe what is visually identifiable in the image. Do not guess a
@@ -76,7 +80,16 @@ Return ONLY the JSON object, with no extra text, explanation, or markdown fences
 """
 
 # Fields the model is asked for, and their "unset" default.
-IDENTIFICATION_FIELDS = ("object", "material", "material_subtype", "food_contaminated")
+IDENTIFICATION_FIELDS = (
+    "object",
+    "material",
+    "material_subtype",
+    "food_contaminated",
+    "hazard_flag",
+    "hazard_reason",
+    "visible_text",
+    "reusable_condition",
+)
 
 _JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
 _NULLISH_STRINGS = {"", "null", "none", "n/a", "unknown"}

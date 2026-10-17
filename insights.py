@@ -29,6 +29,7 @@ def generate_recommendations(days: int = 30) -> list[str]:
     candidates.extend(_frequent_item_recommendations(days))
     candidates.extend(_location_category_spike_recommendations(days))
     candidates.extend(_high_value_discard_recommendations(days))
+    candidates.extend(_hazard_flag_recommendations(days))
 
     existing = {r["text"] for r in db.list_recommendations(limit=200)}
     new_texts = [text for text in candidates if text not in existing]
@@ -75,4 +76,16 @@ def _high_value_discard_recommendations(days: int) -> list[str]:
                 f"value over the last {days} days. Flag for review as potentially recoverable or "
                 "reusable inventory rather than waste."
             )
+    return out
+
+
+def _hazard_flag_recommendations(days: int) -> list[str]:
+    events = db.list_hazard_events(days=days)
+    out = []
+    for event in events:
+        out.append(
+            f"A potentially hazardous item ('{event['detected_object']}') was flagged for review "
+            f"at '{event['location']}' on {event['date']}: {event['hazard_reason']}. "
+            "Recommend manual inspection before further handling."
+        )
     return out
