@@ -20,6 +20,10 @@ requests via `app.state`.
 
 Run locally:
     uvicorn api:app --reload
+
+    Or, if port 8000 may already be taken by another local process and you
+    don't want to hunt for a free port yourself:
+    python run_api.py
 """
 
 import io
