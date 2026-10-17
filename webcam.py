@@ -2,8 +2,8 @@
 
 Shows the webcam feed; press SPACE to send the current frame to the
 FastAPI `/sort` endpoint and overlay the fast sort decision. That decision
-comes back immediately (the lightweight local model); the advanced Qwen
-analysis runs afterward in the background on the server and shows up a few
+comes back immediately (the lightweight local model); the advanced analysis
+runs afterward in the background on the server and shows up a few
 seconds later in the dashboard (http://127.0.0.1:8000/), not here. Press Q
 to quit. Inference runs in a background thread so the preview never
 freezes, and a capture already in flight blocks new ones until it resolves.

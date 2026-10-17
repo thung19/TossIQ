@@ -1,4 +1,4 @@
-"""Rules engine that turns a Qwen identification into a disposal decision.
+"""Rules engine that turns a model identification into a disposal decision.
 
 Deliberately separate from the model: disposal rules vary by city/hauler,
 so they live in rules.json (editable without touching code) rather than

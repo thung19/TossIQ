@@ -1,7 +1,7 @@
 """Batch-tests main.run() against labeled images and reports identification
-accuracy (did Qwen name the right object?) and sorting accuracy (did the
-rules engine land on the right bin?) as separate numbers -- a bad score can
-come from either the model or the rules, and this tells you which.
+accuracy (did the model name the right object?) and sorting accuracy (did
+the rules engine land on the right bin?) as separate numbers -- a bad score
+can come from either the model or the rules, and this tells you which.
 
 Usage:
     python evaluate.py                  # uses images/labels.json
@@ -12,7 +12,6 @@ import json
 import sys
 from pathlib import Path
 
-from identify import load_model
 from sorting import load_rules
 from main import run
 
@@ -36,7 +35,6 @@ def main():
     labels_path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_LABELS_PATH
     labels = load_labels(labels_path)
 
-    handle = load_model()
     rules = load_rules()
 
     id_correct = 0
@@ -49,7 +47,7 @@ def main():
             print(f"skip {filename}: file not found")
             continue
 
-        result = run(image_path, handle=handle, rules=rules)
+        result = run(image_path, rules=rules)
         identification = result["identification"]
         sorting = result["sorting"]
 
