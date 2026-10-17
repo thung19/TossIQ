@@ -2,22 +2,30 @@ import json
 import sys
 from pathlib import Path
 
-from identify import load_model, identify_image, parse_identification
+import genai_vision
+from identify import load_model
 from sorting import classify, load_rules
 
 DEFAULT_IMAGE = Path("images/test.jpg")
+
+# Advanced-analysis backend handle, lazily loaded and cached here: `handle`
+# stays a parameter for backward compatibility with callers (api.py still
+# loads and passes identify.py's Qwen ModelHandle), but the advanced-
+# analysis step now runs on genai_vision's own OCI Generative AI client,
+# which this module manages independently of that parameter.
+_genai_handle = None
 
 
 def run(image_path, handle=None, rules=None) -> dict:
     """Runs identification + sorting on one image. Reusable by evaluate.py
     so a single loaded model/ruleset can be shared across many images."""
-    if handle is None:
-        handle = load_model()
+    global _genai_handle
+    if _genai_handle is None:
+        _genai_handle = genai_vision.load_model()
     if rules is None:
         rules = load_rules()
 
-    raw = identify_image(handle, image_path)
-    identification = parse_identification(raw)
+    identification = genai_vision.identify_image(_genai_handle, image_path)
 
     if identification["parse_error"]:
         # Malformed model output: still return a usable result instead of
