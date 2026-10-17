@@ -94,6 +94,22 @@
   .status-msg { font-size: 12px; color: var(--muted); margin-top: 6px; }
   .empty { color: var(--muted); font-size: 13px; padding: 8px 0; }
   .topbar { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+  .events-panel { max-height: 360px; overflow-y: auto; }
+  .event-thumb { width: 48px; height: 48px; object-fit: cover; border-radius: 4px; display: block; }
+  .event-thumb-placeholder {
+    width: 48px; height: 48px; border-radius: 4px;
+    background: #0d1117; color: var(--muted);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px;
+  }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 11px; font-weight: 600; text-transform: capitalize; color: #04121f;
+  }
+  .badge-recycling { background: var(--recycling); }
+  .badge-compost { background: var(--compost); }
+  .badge-landfill { background: var(--landfill); }
+  .badge-unknown { background: var(--unknown); }
 </style>
 </head>
 <body>
@@ -171,6 +187,16 @@
   </div>
 </div>
 
+<div class="grid">
+  <div class="panel events-panel">
+    <h2>Recent events</h2>
+    <table>
+      <thead><tr><th>Image</th><th>Object</th><th>Category</th><th>Location</th><th>Time</th></tr></thead>
+      <tbody id="eventsBody"></tbody>
+    </table>
+  </div>
+</div>
+
 <script>
 const daysSelect = document.getElementById('daysSelect');
 
@@ -243,6 +269,21 @@ async function refreshRecommendations() {
   `).join('') || '<div class="empty">No recommendations yet &mdash; click "Generate insights" once you have some disposal events logged.</div>';
 }
 
+async function refreshEvents() {
+  const events = await fetchJSON('/events/recent?limit=20');
+  document.getElementById('eventsBody').innerHTML = events.map(e => `
+    <tr>
+      <td>${e.image_url
+        ? `<img class="event-thumb" src="${escapeHtml(e.image_url)}" alt="">`
+        : '<div class="event-thumb-placeholder">&mdash;</div>'}</td>
+      <td>${escapeHtml(e.detected_object) || '&mdash;'}</td>
+      <td><span class="badge badge-${escapeHtml(e.category) || 'unknown'}">${escapeHtml(e.category) || 'unknown'}</span></td>
+      <td>${escapeHtml(e.location) || '&mdash;'}</td>
+      <td>${escapeHtml(e.created_at)}</td>
+    </tr>
+  `).join('') || '<tr><td class="empty" colspan="5">No events yet</td></tr>';
+}
+
 async function refreshAll() {
   await Promise.all([
     refreshOverview(),
@@ -250,6 +291,7 @@ async function refreshAll() {
     refreshLocations(),
     refreshProducts(),
     refreshRecommendations(),
+    refreshEvents(),
   ]).catch(err => console.error(err));
 }
 

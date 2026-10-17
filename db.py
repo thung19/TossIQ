@@ -141,6 +141,25 @@ def insert_waste_event(
         return event_id_var.getvalue()[0]
 
 
+def list_recent_events(limit: int = 20) -> list[dict]:
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT event_id, detected_object, material, category, location, confidence, image_key, created_at
+            FROM waste_events
+            ORDER BY created_at DESC
+            FETCH FIRST :limit ROWS ONLY
+            """,
+            limit=limit,
+        )
+        cols = [d[0].lower() for d in cursor.description]
+        rows = [dict(zip(cols, row)) for row in cursor.fetchall()]
+        for row in rows:
+            if row["created_at"]:
+                row["created_at"] = row["created_at"].strftime("%Y-%m-%d %H:%M:%S")
+        return rows
+
+
 # ---------------------------------------------------------------------------
 # Dashboard queries (Experience 4)
 # ---------------------------------------------------------------------------

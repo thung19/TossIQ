@@ -28,6 +28,7 @@ Run locally:
 
 import io
 import logging
+import uuid
 
 from contextlib import asynccontextmanager
 
@@ -38,6 +39,7 @@ from pydantic import BaseModel
 
 import db
 import insights
+import oci_storage
 from fast_sort import detect as fast_detect
 from fast_sort import load_fast_model
 from identify import load_model
@@ -137,14 +139,25 @@ def _confidence_for(identification: dict) -> int:
     return CONFIDENCE_PARTIAL
 
 
-def _persist_advanced_result(identification: dict, sorting_result: dict, location: str | None) -> tuple[int, dict | None]:
+def _upload_event_image(image: Image.Image) -> str | None:
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG")
+    key = f"events/{uuid.uuid4().hex}.jpg"
+    return oci_storage.upload_image(buffer.getvalue(), key)
+
+
+def _persist_advanced_result(
+    image: Image.Image, identification: dict, sorting_result: dict, location: str | None
+) -> tuple[int, dict | None]:
     matched_product = db.match_product(identification.get("object"))
+    image_key = _upload_event_image(image)
     event_id = db.insert_waste_event(
         detected_object=identification.get("object"),
         material=identification.get("material"),
         category=sorting_result["category"],
         location=location,
         confidence=_confidence_for(identification),
+        image_key=image_key,
         product_id=matched_product["product_id"] if matched_product else None,
     )
     return event_id, matched_product
@@ -160,7 +173,7 @@ def _run_advanced_and_persist(image: Image.Image, handle, rules, location: str |
     """
     try:
         result = run_advanced(image, handle=handle, rules=rules)
-        _persist_advanced_result(result["identification"], result["sorting"], location)
+        _persist_advanced_result(image, result["identification"], result["sorting"], location)
     except Exception:
         logger.exception("Background advanced analysis failed")
 
@@ -178,7 +191,7 @@ async def classify(file: UploadFile = File(...), location: str | None = Form(Non
 
     identification = result["identification"]
     sorting_result = result["sorting"]
-    event_id, matched_product = _persist_advanced_result(identification, sorting_result, location)
+    event_id, matched_product = _persist_advanced_result(image, identification, sorting_result, location)
 
     return ClassificationResponse(
         object=identification.get("object"),
@@ -265,6 +278,15 @@ def get_stats_items(days: int = 30):
 @app.get("/stats/locations")
 def get_stats_locations(days: int = 30):
     return db.stats_locations(days=days)
+
+
+@app.get("/events/recent")
+def get_events_recent(limit: int = 20):
+    events = db.list_recent_events(limit=limit)
+    for event in events:
+        image_key = event.pop("image_key", None)
+        event["image_url"] = oci_storage.get_presigned_url(image_key) if image_key else None
+    return events
 
 
 # ---------------------------------------------------------------------------
