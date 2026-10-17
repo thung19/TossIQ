@@ -1,0 +1,6 @@
+{
+  "test.jpg": {
+    "expected_object_keywords": ["bottle"],
+    "expected_category": "recycling"
+  }
+}

@@ -1,0 +1,75 @@
+{
+  "_comment": "Rules are tried top-to-bottom; the first fully-matching rule wins. Edit freely to match local recycling/compost program rules -- no code changes needed. 'match' keys are ANDed together; list values mean 'any of'; object_keywords checks for a substring match against the identified object name.",
+  "rules": [
+    {
+      "name": "organic_compost",
+      "match": { "material": "organic" },
+      "category": "compost",
+      "reason": "Organic/food waste is compostable."
+    },
+    {
+      "name": "film_and_wrappers_landfill",
+      "match": {
+        "material": "plastic",
+        "object_keywords": ["wrapper", "bag", "film", "pouch", "straw"]
+      },
+      "category": "landfill",
+      "reason": "Flexible plastic film, bags, and wrappers are not accepted by most curbside recycling programs."
+    },
+    {
+      "name": "contaminated_landfill",
+      "match": {
+        "food_contaminated": true,
+        "material": ["plastic", "metal", "glass", "paper", "cardboard"]
+      },
+      "category": "landfill",
+      "reason": "Food or liquid residue contaminates the material, which disqualifies it from recycling."
+    },
+    {
+      "name": "plastic_bottle_recyclable",
+      "match": {
+        "material": "plastic",
+        "material_subtype": ["PET", "PETE", "HDPE"],
+        "object_keywords": ["bottle", "jug", "container"]
+      },
+      "category": "recycling",
+      "reason": "PET/HDPE bottles, jugs, and containers are widely accepted curbside recyclables."
+    },
+    {
+      "name": "plastic_unknown_subtype",
+      "match": { "material": "plastic", "material_subtype": null },
+      "category": "unknown",
+      "reason": "Plastic resin type could not be identified; recyclability depends on the resin code."
+    },
+    {
+      "name": "metal_recyclable",
+      "match": { "material": "metal" },
+      "category": "recycling",
+      "reason": "Aluminum and steel cans/containers are widely accepted curbside recyclables."
+    },
+    {
+      "name": "glass_recyclable",
+      "match": { "material": "glass" },
+      "category": "recycling",
+      "reason": "Glass bottles and jars are widely accepted curbside recyclables."
+    },
+    {
+      "name": "cardboard_recyclable",
+      "match": { "material": "cardboard" },
+      "category": "recycling",
+      "reason": "Clean cardboard is a widely accepted curbside recyclable."
+    },
+    {
+      "name": "paper_recyclable",
+      "match": { "material": "paper" },
+      "category": "recycling",
+      "reason": "Clean paper is a widely accepted curbside recyclable."
+    },
+    {
+      "name": "material_unknown",
+      "match": { "material": null },
+      "category": "unknown",
+      "reason": "Material could not be visually identified."
+    }
+  ]
+}

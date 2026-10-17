@@ -1,0 +1,17 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Model weights -- large, downloadable/reproducible, not source
+*.pt
+*.ts
+*.onnx
+*.safetensors
+
+# Captured images (keep test fixtures tracked separately if needed)
+images/*.jpg
+images/*.jpeg
+images/*.png
+!images/test.jpg
