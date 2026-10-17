@@ -117,15 +117,21 @@ def insert_waste_event(
     confidence=None,
     image_key=None,
     product_id=None,
+    created_at=None,
 ) -> int:
+    """created_at, when given, is the actual capture/disposal time (e.g. from an
+    edge device queued during a network outage) rather than persist time; it is
+    passed straight through as a bind value, so SYSTIMESTAMP is only used when
+    the caller has no capture-time timestamp to report."""
+    created_at_sql = ":created_at" if created_at is not None else "SYSTIMESTAMP"
     with get_connection() as conn, conn.cursor() as cursor:
         event_id_var = cursor.var(int)
         cursor.execute(
-            """
+            f"""
             INSERT INTO waste_events
                 (product_id, detected_object, material, category, location, confidence, image_key, created_at)
             VALUES
-                (:product_id, :detected_object, :material, :category, :location, :confidence, :image_key, SYSTIMESTAMP)
+                (:product_id, :detected_object, :material, :category, :location, :confidence, :image_key, {created_at_sql})
             RETURNING event_id INTO :event_id
             """,
             product_id=product_id,
@@ -136,6 +142,7 @@ def insert_waste_event(
             confidence=confidence,
             image_key=image_key,
             event_id=event_id_var,
+            **({"created_at": created_at} if created_at is not None else {}),
         )
         conn.commit()
         return event_id_var.getvalue()[0]
