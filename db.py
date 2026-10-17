@@ -105,6 +105,62 @@ def match_product(detected_object: str | None) -> dict | None:
     return best if best_score > 0 else None
 
 
+def _vector_literal(embedding: list[float]) -> str:
+    """Formats an embedding as the Oracle VECTOR literal string TO_VECTOR()
+    accepts: '[v1,v2,...]'."""
+    return "[" + ",".join(repr(float(v)) for v in embedding) + "]"
+
+
+def set_product_reference_embedding(product_id: int, embedding: list[float]) -> None:
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE products
+            SET reference_image_embedding = TO_VECTOR(:embedding_str, 1536, FLOAT32)
+            WHERE product_id = :product_id
+            """,
+            embedding_str=_vector_literal(embedding),
+            product_id=product_id,
+        )
+        conn.commit()
+
+
+def match_product_by_image(embedding: list[float], max_distance: float = 0.3) -> dict | None:
+    """Best-effort catalog match by reference-image visual similarity
+    (cosine distance over Cohere Embed v4 embeddings), per PRD section 2C's
+    "configurable recognition without requiring ... retrain[ing]" goal.
+
+    `max_distance` is a heuristic threshold, not an empirically tuned one --
+    it was only exercised against a single test image during technical
+    verification, not multiple real catalog products, so it will likely need
+    tuning once there's real catalog data.
+
+    Only products with a reference image uploaded (REFERENCE_IMAGE_EMBEDDING
+    IS NOT NULL) are considered; returns the closest match as a dict, or
+    None if the closest match's distance exceeds `max_distance`.
+    """
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT product_id, product_name, supplier, sku, material, unit_cost,
+                   VECTOR_DISTANCE(reference_image_embedding, TO_VECTOR(:embedding_str, 1536, FLOAT32), COSINE) AS distance
+            FROM products
+            WHERE reference_image_embedding IS NOT NULL
+            ORDER BY distance
+            FETCH FIRST 1 ROW ONLY
+            """,
+            embedding_str=_vector_literal(embedding),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        cols = [d[0].lower() for d in cursor.description]
+        result = dict(zip(cols, row))
+        if result["distance"] > max_distance:
+            return None
+        return result
+
+
 # ---------------------------------------------------------------------------
 # Disposal events (WASTE_EVENTS)
 # ---------------------------------------------------------------------------

@@ -272,6 +272,7 @@
       <input id="pSku" placeholder="SKU">
       <input id="pMaterial" placeholder="Material">
       <input id="pCost" placeholder="Unit cost" type="number" step="0.01">
+      <input id="pReferenceImage" type="file" accept="image/*">
       <button type="submit">Add</button>
     </form>
     <div class="status-msg" id="productStatus"></div>
@@ -667,6 +668,7 @@ document.getElementById('productForm').addEventListener('submit', async (e) => {
     material: document.getElementById('pMaterial').value || null,
     unit_cost: document.getElementById('pCost').value ? parseFloat(document.getElementById('pCost').value) : null,
   };
+  const imageFile = document.getElementById('pReferenceImage').files[0];
   status.className = 'status-msg';
   status.textContent = 'Adding...';
   try {
@@ -676,8 +678,27 @@ document.getElementById('productForm').addEventListener('submit', async (e) => {
       body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(await res.text());
+    const { product_id } = await res.json();
     status.className = 'status-msg status-good';
     status.textContent = 'Added.';
+
+    if (imageFile) {
+      status.textContent = 'Added. Uploading reference image...';
+      try {
+        const imgBody = new FormData();
+        imgBody.append('file', imageFile);
+        const imgRes = await fetch(`/products/${product_id}/reference-image`, {
+          method: 'POST',
+          body: imgBody,
+        });
+        if (!imgRes.ok) throw new Error(await imgRes.text());
+        status.textContent = 'Added, with reference image.';
+      } catch (imgErr) {
+        status.className = 'status-msg status-critical';
+        status.textContent = 'Added, but reference image failed: ' + imgErr.message;
+      }
+    }
+
     e.target.reset();
     await refreshProducts();
   } catch (err) {
