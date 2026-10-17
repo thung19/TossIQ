@@ -8,9 +8,9 @@ from sorting import classify, load_rules
 DEFAULT_IMAGE = Path("images/test.jpg")
 
 # Advanced-analysis backend handle, lazily loaded and cached here: `handle`
-# stays an accepted-but-unused parameter so callers written for the Qwen
-# variant (api.py, evaluate.py) need no signature changes. genai_vision
-# manages its own client independently of this parameter.
+# stays an accepted-but-unused parameter for backward compatibility with
+# any caller still passing one explicitly. genai_vision manages its own
+# client independently of this parameter.
 _genai_handle = None
 
 
