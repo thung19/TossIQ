@@ -385,7 +385,7 @@ function renderCategoryChart(byCategory) {
     return `
       <button type="button" class="legend-row" data-cat="${cat}">
         <span class="cat-label"><span class="cat-dot cat-${cat}"></span>${escapeHtml(cat)}</span>
-        <span><span class="legend-count">${count}</span><span class="legend-pct">${pct.toFixed(0)}%</span></span>
+        <span><span class="legend-count">${count}</span> <span class="legend-pct">${pct.toFixed(0)}%</span></span>
       </button>
     `;
   }).join('');
