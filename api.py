@@ -240,6 +240,45 @@ async def sort(
     return SortResponse(**fast_result)
 
 
+@app.post("/enrich")
+async def enrich(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    fast_category: str | None = Form(None),
+    fast_label: str | None = Form(None),
+    fast_confidence: float | None = Form(None),
+    location: str | None = Form(None),
+):
+    """Advanced-analysis path for a frame already fast-sorted on the edge device.
+
+    The caller (edge/pi_sort_client.py) already ran the fast model locally
+    and triggered the physical sort there -- this endpoint only runs the
+    slow Qwen analysis and persists the result, same as /sort's background
+    task. The fast category/label/confidence are informational only;
+    WASTE_EVENTS.CATEGORY still records the advanced-analysis category,
+    same as today.
+    """
+    contents = await _read_and_validate_upload(file)
+    image = _decode_upload(contents)
+
+    logger.info(
+        "Received already-sorted item: fast_category=%s fast_label=%s fast_confidence=%s",
+        fast_category,
+        fast_label,
+        fast_confidence,
+    )
+
+    background_tasks.add_task(
+        _run_advanced_and_persist,
+        image,
+        app.state.model_handle,
+        app.state.rules,
+        location,
+    )
+
+    return {"status": "accepted"}
+
+
 # ---------------------------------------------------------------------------
 # Catalog (Experience 3)
 # ---------------------------------------------------------------------------
