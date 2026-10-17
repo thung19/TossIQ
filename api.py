@@ -157,9 +157,10 @@ def _persist_advanced_result(
     captured_at: datetime | None = None,
 ) -> tuple[int, dict | None]:
     matched_product = None
-    embedding = image_embed.embed_image(image)
-    if embedding is not None:
-        matched_product = db.match_product_by_image(embedding)
+    if db.has_any_reference_embedding():
+        embedding = image_embed.embed_image(image)
+        if embedding is not None:
+            matched_product = db.match_product_by_image(embedding)
     if matched_product is None:
         # Fall back to text-overlap matching -- the common case until an
         # admin uploads a reference image for a catalog product, or when

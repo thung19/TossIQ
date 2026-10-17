@@ -125,6 +125,18 @@ def set_product_reference_embedding(product_id: int, embedding: list[float]) -> 
         conn.commit()
 
 
+def has_any_reference_embedding() -> bool:
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT 1 FROM products
+            WHERE reference_image_embedding IS NOT NULL
+            FETCH FIRST 1 ROW ONLY
+            """
+        )
+        return cursor.fetchone() is not None
+
+
 def match_product_by_image(embedding: list[float], max_distance: float = 0.3) -> dict | None:
     """Best-effort catalog match by reference-image visual similarity
     (cosine distance over Cohere Embed v4 embeddings), per PRD section 2C's
