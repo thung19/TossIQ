@@ -118,6 +118,10 @@ def insert_waste_event(
     image_key=None,
     product_id=None,
     created_at=None,
+    hazard_flag=None,
+    hazard_reason=None,
+    visible_text=None,
+    reusable_condition=None,
 ) -> int:
     """created_at, when given, is the actual capture/disposal time (e.g. from an
     edge device queued during a network outage) rather than persist time; it is
@@ -129,9 +133,11 @@ def insert_waste_event(
         cursor.execute(
             f"""
             INSERT INTO waste_events
-                (product_id, detected_object, material, category, location, confidence, image_key, created_at)
+                (product_id, detected_object, material, category, location, confidence, image_key, created_at,
+                 hazard_flag, hazard_reason, visible_text, reusable_condition)
             VALUES
-                (:product_id, :detected_object, :material, :category, :location, :confidence, :image_key, {created_at_sql})
+                (:product_id, :detected_object, :material, :category, :location, :confidence, :image_key, {created_at_sql},
+                 :hazard_flag, :hazard_reason, :visible_text, :reusable_condition)
             RETURNING event_id INTO :event_id
             """,
             product_id=product_id,
@@ -142,6 +148,10 @@ def insert_waste_event(
             confidence=confidence,
             image_key=image_key,
             event_id=event_id_var,
+            hazard_flag=hazard_flag,
+            hazard_reason=hazard_reason,
+            visible_text=visible_text,
+            reusable_condition=reusable_condition,
             **({"created_at": created_at} if created_at is not None else {}),
         )
         conn.commit()
@@ -152,7 +162,8 @@ def list_recent_events(limit: int = 20) -> list[dict]:
     with get_connection() as conn, conn.cursor() as cursor:
         cursor.execute(
             """
-            SELECT event_id, detected_object, material, category, location, confidence, image_key, created_at
+            SELECT event_id, detected_object, material, category, location, confidence, image_key, created_at,
+                   hazard_flag, hazard_reason, visible_text, reusable_condition
             FROM waste_events
             ORDER BY created_at DESC
             FETCH FIRST :limit ROWS ONLY
@@ -254,6 +265,31 @@ def stats_items(days: int = 30) -> list[dict]:
                 "last_seen": last_seen.strftime("%Y-%m-%d %H:%M:%S") if last_seen else None,
                 "estimated_value": estimated_value,
             })
+        return rows
+
+
+def list_hazard_events(days: int = 30) -> list[dict]:
+    """Recent events flagged as a visible hazard (battery/chemical/sharps indicator etc),
+    for insights.py's hazard recommendation rule."""
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT detected_object, location, hazard_reason, created_at
+            FROM waste_events
+            WHERE hazard_flag = 1 AND created_at >= SYSTIMESTAMP - :days
+            ORDER BY created_at DESC
+            """,
+            days=days,
+        )
+        rows = [
+            {
+                "detected_object": r[0],
+                "location": r[1] or "unspecified",
+                "hazard_reason": r[2],
+                "date": r[3].strftime("%Y-%m-%d") if r[3] else None,
+            }
+            for r in cursor.fetchall()
+        ]
         return rows
 
 

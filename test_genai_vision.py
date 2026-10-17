@@ -20,7 +20,11 @@ WELL_FORMED_JSON = """
   "object": "plastic water bottle",
   "material": "plastic",
   "material_subtype": "PET",
-  "food_contaminated": false
+  "food_contaminated": false,
+  "hazard_flag": false,
+  "hazard_reason": null,
+  "visible_text": "Aqua Pure",
+  "reusable_condition": "intact"
 }
 """
 
@@ -47,6 +51,10 @@ class ParseIdentificationTests(unittest.TestCase):
         self.assertEqual(result["material"], "plastic")
         self.assertEqual(result["material_subtype"], "PET")
         self.assertIs(result["food_contaminated"], False)
+        self.assertIs(result["hazard_flag"], False)
+        self.assertIsNone(result["hazard_reason"])
+        self.assertEqual(result["visible_text"], "Aqua Pure")
+        self.assertEqual(result["reusable_condition"], "intact")
 
     def test_no_json_object_found(self):
         result = genai_vision.parse_identification("I cannot identify this item.")
@@ -59,12 +67,20 @@ class ParseIdentificationTests(unittest.TestCase):
         self.assertIn("invalid JSON", result["parse_error"])
 
     def test_nullish_string_normalized_to_none(self):
-        raw = '{"object": "unknown", "material": "n/a", "material_subtype": null, "food_contaminated": "none"}'
+        raw = (
+            '{"object": "unknown", "material": "n/a", "material_subtype": null, '
+            '"food_contaminated": "none", "hazard_flag": "unknown", "hazard_reason": "",'
+            ' "visible_text": "n/a", "reusable_condition": "None"}'
+        )
         result = genai_vision.parse_identification(raw)
         self.assertIsNone(result["object"])
         self.assertIsNone(result["material"])
         self.assertIsNone(result["material_subtype"])
         self.assertIsNone(result["food_contaminated"])
+        self.assertIsNone(result["hazard_flag"])
+        self.assertIsNone(result["hazard_reason"])
+        self.assertIsNone(result["visible_text"])
+        self.assertIsNone(result["reusable_condition"])
         self.assertIsNone(result["parse_error"])
 
 
