@@ -58,13 +58,13 @@ CATEGORY_COLORS = {
 def process_capture(frame, model, location, base_path) -> dict | None:
     """Runs the fast sort decision, triggers the actuator, and queues the
     frame for upload -- all without any network dependency."""
-    ok, jpeg = cv2.imencode(".jpg", frame)
-    if not ok:
-        logger.error("Could not encode frame as JPEG")
-        return None
-
     result = fast_detect(model, frame)
     actuator.trigger_sort_mechanism(result["category"])
+
+    ok, jpeg = cv2.imencode(".jpg", frame)
+    if not ok:
+        logger.error("Could not encode frame as JPEG; sort completed but item will not be queued for upload")
+        return result
 
     metadata = {
         "label": result["label"],
@@ -90,6 +90,8 @@ def _upload_item(item: dict, url: str, base_path) -> None:
         data["fast_confidence"] = metadata["confidence"]
     if metadata.get("location"):
         data["location"] = metadata["location"]
+    if metadata.get("timestamp"):
+        data["captured_at"] = metadata["timestamp"]
 
     try:
         response = requests.post(url, files=files, data=data, timeout=REQUEST_TIMEOUT_SECONDS)

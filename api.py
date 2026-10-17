@@ -31,6 +31,7 @@ import logging
 import uuid
 
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.staticfiles import StaticFiles
@@ -147,7 +148,11 @@ def _upload_event_image(image: Image.Image) -> str | None:
 
 
 def _persist_advanced_result(
-    image: Image.Image, identification: dict, sorting_result: dict, location: str | None
+    image: Image.Image,
+    identification: dict,
+    sorting_result: dict,
+    location: str | None,
+    captured_at: datetime | None = None,
 ) -> tuple[int, dict | None]:
     matched_product = db.match_product(identification.get("object"))
     image_key = _upload_event_image(image)
@@ -159,11 +164,14 @@ def _persist_advanced_result(
         confidence=_confidence_for(identification),
         image_key=image_key,
         product_id=matched_product["product_id"] if matched_product else None,
+        created_at=captured_at,
     )
     return event_id, matched_product
 
 
-def _run_advanced_and_persist(image: Image.Image, handle, rules, location: str | None) -> None:
+def _run_advanced_and_persist(
+    image: Image.Image, handle, rules, location: str | None, captured_at: datetime | None = None
+) -> None:
     """Background-task body: run the slow Qwen analysis and persist the result.
 
     Never raises into the caller -- this runs detached from the request that
@@ -173,7 +181,9 @@ def _run_advanced_and_persist(image: Image.Image, handle, rules, location: str |
     """
     try:
         result = run_advanced(image, handle=handle, rules=rules)
-        _persist_advanced_result(image, result["identification"], result["sorting"], location)
+        _persist_advanced_result(
+            image, result["identification"], result["sorting"], location, captured_at
+        )
     except Exception:
         logger.exception("Background advanced analysis failed")
 
@@ -248,6 +258,7 @@ async def enrich(
     fast_label: str | None = Form(None),
     fast_confidence: float | None = Form(None),
     location: str | None = Form(None),
+    captured_at: str | None = Form(None),
 ):
     """Advanced-analysis path for a frame already fast-sorted on the edge device.
 
@@ -256,7 +267,10 @@ async def enrich(
     slow Qwen analysis and persists the result, same as /sort's background
     task. The fast category/label/confidence are informational only;
     WASTE_EVENTS.CATEGORY still records the advanced-analysis category,
-    same as today.
+    same as today. captured_at (ISO 8601) is the edge device's capture-time
+    timestamp from its durable queue, so items uploaded well after capture
+    (e.g. after a network outage) still record when the item was actually
+    disposed of, not when the upload happened.
     """
     contents = await _read_and_validate_upload(file)
     image = _decode_upload(contents)
@@ -268,12 +282,20 @@ async def enrich(
         fast_confidence,
     )
 
+    parsed_captured_at = None
+    if captured_at:
+        try:
+            parsed_captured_at = datetime.fromisoformat(captured_at)
+        except ValueError:
+            logger.warning("Ignoring unparseable captured_at value: %s", captured_at)
+
     background_tasks.add_task(
         _run_advanced_and_persist,
         image,
         app.state.model_handle,
         app.state.rules,
         location,
+        parsed_captured_at,
     )
 
     return {"status": "accepted"}
