@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TossIQ Dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #0f1419;
+    --panel: #171d26;
+    --border: #2a323f;
+    --text: #e6edf3;
+    --muted: #8b96a5;
+    --recycling: #3fb950;
+    --compost: #d29922;
+    --landfill: #f85149;
+    --unknown: #8b96a5;
+    --accent: #58a6ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 24px;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    overflow-x: auto;
+  }
+  .panel h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    margin: 0 0 12px;
+  }
+  .big-number { font-size: 36px; font-weight: 600; }
+  .bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; }
+  .bar-label { width: 90px; flex-shrink: 0; text-transform: capitalize; }
+  .bar-track { flex: 1; background: #0d1117; border-radius: 4px; height: 10px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 4px; }
+  .bar-count { width: 32px; text-align: right; color: var(--muted); flex-shrink: 0; }
+  .cat-recycling { background: var(--recycling); }
+  .cat-compost { background: var(--compost); }
+  .cat-landfill { background: var(--landfill); }
+  .cat-unknown { background: var(--unknown); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; }
+  .rec-item {
+    border-left: 3px solid var(--accent);
+    padding: 8px 12px;
+    margin-bottom: 8px;
+    background: #0d1117;
+    border-radius: 4px;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .rec-time { color: var(--muted); font-size: 11px; margin-top: 4px; }
+  button {
+    background: var(--accent);
+    color: #04121f;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:hover { opacity: 0.9; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  input, select {
+    background: #0d1117;
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 7px 10px;
+    font-size: 13px;
+  }
+  form { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .status-msg { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .empty { color: var(--muted); font-size: 13px; padding: 8px 0; }
+  .topbar { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div>
+    <h1>TossIQ</h1>
+    <div class="subtitle">Waste intelligence dashboard &mdash; live from OCI</div>
+  </div>
+  <div>
+    <label class="subtitle">Window: </label>
+    <select id="daysSelect">
+      <option value="7">Last 7 days</option>
+      <option value="30" selected>Last 30 days</option>
+      <option value="90">Last 90 days</option>
+    </select>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="panel">
+    <h2>Total items</h2>
+    <div class="big-number" id="totalItems">&mdash;</div>
+  </div>
+
+  <div class="panel">
+    <h2>By category</h2>
+    <div id="categoryBars"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Top items</h2>
+    <table><tbody id="topItemsBody"></tbody></table>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="panel">
+    <h2>Item-level detail</h2>
+    <table>
+      <thead><tr><th>Item</th><th>Catalog match</th><th>Count</th><th>Last seen</th><th>Est. value</th></tr></thead>
+      <tbody id="itemsBody"></tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <h2>By location</h2>
+    <table>
+      <thead><tr><th>Location</th><th>Category</th><th>Count</th></tr></thead>
+      <tbody id="locationsBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="panel">
+    <h2>Add catalog item</h2>
+    <form id="productForm">
+      <input id="pName" placeholder="Product name" required>
+      <input id="pSupplier" placeholder="Supplier">
+      <input id="pSku" placeholder="SKU">
+      <input id="pMaterial" placeholder="Material">
+      <input id="pCost" placeholder="Unit cost" type="number" step="0.01">
+      <button type="submit">Add</button>
+    </form>
+    <div class="status-msg" id="productStatus"></div>
+    <table><tbody id="productsBody"></tbody></table>
+  </div>
+
+  <div class="panel">
+    <h2>Insights &amp; recommendations</h2>
+    <button id="generateBtn">Generate insights</button>
+    <div class="status-msg" id="generateStatus"></div>
+    <div id="recommendationsList" style="margin-top: 12px;"></div>
+  </div>
+</div>
+
+<script>
+const daysSelect = document.getElementById('daysSelect');
+
+async function fetchJSON(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${url} -> ${res.status}`);
+  return res.json();
+}
+
+function escapeHtml(s) {
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function refreshOverview() {
+  const days = daysSelect.value;
+  const data = await fetchJSON(`/stats/overview?days=${days}`);
+  document.getElementById('totalItems').textContent = data.total_items;
+
+  const maxCount = Math.max(1, ...data.by_category.map(c => c.count));
+  document.getElementById('categoryBars').innerHTML = data.by_category.map(c => `
+    <div class="bar-row">
+      <div class="bar-label">${escapeHtml(c.category)}</div>
+      <div class="bar-track"><div class="bar-fill cat-${escapeHtml(c.category)}" style="width:${(c.count / maxCount * 100).toFixed(0)}%"></div></div>
+      <div class="bar-count">${c.count}</div>
+    </div>
+  `).join('') || '<div class="empty">No events yet</div>';
+
+  document.getElementById('topItemsBody').innerHTML = data.top_items.map(i => `
+    <tr><td>${escapeHtml(i.object)}</td><td style="text-align:right">${i.count}</td></tr>
+  `).join('') || '<tr><td class="empty">No events yet</td></tr>';
+}
+
+async function refreshItems() {
+  const days = daysSelect.value;
+  const items = await fetchJSON(`/stats/items?days=${days}`);
+  document.getElementById('itemsBody').innerHTML = items.map(i => `
+    <tr>
+      <td>${escapeHtml(i.detected_object)}</td>
+      <td>${escapeHtml(i.matched_product) || '&mdash;'}</td>
+      <td>${i.count}</td>
+      <td>${escapeHtml(i.last_seen)}</td>
+      <td>${i.estimated_value !== null ? '$' + i.estimated_value.toFixed(2) : '&mdash;'}</td>
+    </tr>
+  `).join('') || '<tr><td class="empty" colspan="5">No events yet</td></tr>';
+}
+
+async function refreshLocations() {
+  const days = daysSelect.value;
+  const rows = await fetchJSON(`/stats/locations?days=${days}`);
+  document.getElementById('locationsBody').innerHTML = rows.map(r => `
+    <tr><td>${escapeHtml(r.location)}</td><td>${escapeHtml(r.category)}</td><td>${r.count}</td></tr>
+  `).join('') || '<tr><td class="empty" colspan="3">No events yet</td></tr>';
+}
+
+async function refreshProducts() {
+  const products = await fetchJSON('/products');
+  document.getElementById('productsBody').innerHTML = products.map(p => `
+    <tr><td>${escapeHtml(p.product_name)}</td><td>${escapeHtml(p.supplier)}</td><td>${p.unit_cost !== null ? '$' + Number(p.unit_cost).toFixed(2) : ''}</td></tr>
+  `).join('') || '<tr><td class="empty" colspan="3">No catalog items yet</td></tr>';
+}
+
+async function refreshRecommendations() {
+  const recs = await fetchJSON('/recommendations');
+  document.getElementById('recommendationsList').innerHTML = recs.map(r => `
+    <div class="rec-item">
+      ${escapeHtml(r.text)}
+      <div class="rec-time">${escapeHtml(r.created_at)}</div>
+    </div>
+  `).join('') || '<div class="empty">No recommendations yet &mdash; click "Generate insights" once you have some disposal events logged.</div>';
+}
+
+async function refreshAll() {
+  await Promise.all([
+    refreshOverview(),
+    refreshItems(),
+    refreshLocations(),
+    refreshProducts(),
+    refreshRecommendations(),
+  ]).catch(err => console.error(err));
+}
+
+document.getElementById('productForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const status = document.getElementById('productStatus');
+  const body = {
+    product_name: document.getElementById('pName').value,
+    supplier: document.getElementById('pSupplier').value || null,
+    sku: document.getElementById('pSku').value || null,
+    material: document.getElementById('pMaterial').value || null,
+    unit_cost: document.getElementById('pCost').value ? parseFloat(document.getElementById('pCost').value) : null,
+  };
+  status.textContent = 'Adding...';
+  try {
+    const res = await fetch('/products', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    status.textContent = 'Added.';
+    e.target.reset();
+    await refreshProducts();
+  } catch (err) {
+    status.textContent = 'Failed: ' + err.message;
+  }
+});
+
+document.getElementById('generateBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('generateBtn');
+  const status = document.getElementById('generateStatus');
+  btn.disabled = true;
+  status.textContent = 'Generating...';
+  try {
+    const days = daysSelect.value;
+    const res = await fetch(`/recommendations/generate?days=${days}`, { method: 'POST' });
+    const data = await res.json();
+    status.textContent = data.new_recommendations.length
+      ? `${data.new_recommendations.length} new recommendation(s).`
+      : 'No new recommendations (nothing new meets the thresholds yet).';
+    await refreshRecommendations();
+  } catch (err) {
+    status.textContent = 'Failed: ' + err.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+daysSelect.addEventListener('change', refreshAll);
+
+refreshAll();
+setInterval(refreshAll, 5000);
+</script>
+</body>
+</html>

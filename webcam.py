@@ -1,15 +1,18 @@
 """Live webcam client for TossIQ.
 
 Shows the webcam feed; press SPACE to send the current frame to the
-existing FastAPI `/classify` endpoint and overlay the result. Press Q to
-quit. Inference runs in a background thread so the preview never freezes
-while Qwen is working, and a capture already in flight blocks new ones
-until it resolves.
+FastAPI `/sort` endpoint and overlay the fast sort decision. That decision
+comes back immediately (the lightweight local model); the advanced Qwen
+analysis runs afterward in the background on the server and shows up a few
+seconds later in the dashboard (http://127.0.0.1:8000/), not here. Press Q
+to quit. Inference runs in a background thread so the preview never
+freezes, and a capture already in flight blocks new ones until it resolves.
 
 Run (in a separate terminal from the API):
     python webcam.py
     python webcam.py --camera 1          # external USB webcam
-    python webcam.py --url http://127.0.0.1:9000/classify
+    python webcam.py --url http://127.0.0.1:9000/sort
+    python webcam.py --location "Vanderbilt Dining Hall"
 """
 
 import argparse
@@ -19,7 +22,7 @@ import time
 import cv2
 import requests
 
-DEFAULT_API_URL = "http://127.0.0.1:8000/classify"
+DEFAULT_API_URL = "http://127.0.0.1:8000/sort"
 REQUEST_TIMEOUT_SECONDS = 30
 
 # Matches api.py's ALLOWED_CONTENT_TYPES; jpeg keeps the upload small/fast.
@@ -36,8 +39,9 @@ CATEGORY_COLORS = {
 class ClassifierClient:
     """Owns the one in-flight request at a time; runs it off the UI thread."""
 
-    def __init__(self, url: str):
+    def __init__(self, url: str, location: str | None = None):
         self.url = url
+        self.location = location
         self._lock = threading.Lock()
         self._busy = False
         self.latest_status = "Press SPACE to classify"
@@ -66,9 +70,10 @@ class ClassifierClient:
                 return
 
             files = {"file": ("frame.jpg", jpeg.tobytes(), JPEG_CONTENT_TYPE)}
+            data = {"location": self.location} if self.location else {}
 
             start = time.monotonic()
-            response = requests.post(self.url, files=files, timeout=REQUEST_TIMEOUT_SECONDS)
+            response = requests.post(self.url, files=files, data=data, timeout=REQUEST_TIMEOUT_SECONDS)
             elapsed_ms = (time.monotonic() - start) * 1000
 
             if response.status_code != 200:
@@ -108,17 +113,17 @@ class ClassifierClient:
 
     def _set_result(self, data: dict, elapsed_ms: float):
         category = data.get("category") or "unknown"
-        obj = data.get("object") or "unknown"
-        material = data.get("material") or "unknown"
-        subtype = data.get("material_subtype")
+        label = data.get("label") or "unrecognized"
+        confidence = data.get("confidence")
         reason = data.get("reason") or ""
-        parse_error = data.get("parse_error")
+        needs_review = data.get("needs_review")
 
         self.latest_status = f"{category.upper()}  ({elapsed_ms:.0f} ms)"
-        material_line = f"Material: {material}" + (f" ({subtype})" if subtype else "")
-        self.latest_lines = [f"Object: {obj}", material_line, f"Reason: {reason}"]
-        if parse_error:
-            self.latest_lines.append(f"[model parse warning: {parse_error}]")
+        confidence_line = f"Confidence: {confidence:.0%}" if confidence is not None else "Confidence: n/a"
+        self.latest_lines = [f"Detected: {label}", confidence_line, f"Reason: {reason}"]
+        if needs_review:
+            self.latest_lines.append("[flagged for manual review -- not auto-routed]")
+        self.latest_lines.append("Advanced analysis running in background -- see dashboard")
         self.latest_color = CATEGORY_COLORS.get(category, CATEGORY_COLORS["unknown"])
 
 
@@ -144,7 +149,8 @@ def draw_overlay(frame, client: ClassifierClient):
 def main():
     parser = argparse.ArgumentParser(description="TossIQ live webcam classifier client")
     parser.add_argument("--camera", type=int, default=0, help="OpenCV camera index (default 0; use 1+ for an external USB webcam)")
-    parser.add_argument("--url", default=DEFAULT_API_URL, help=f"TossIQ /classify URL (default {DEFAULT_API_URL})")
+    parser.add_argument("--url", default=DEFAULT_API_URL, help=f"TossIQ /sort URL (default {DEFAULT_API_URL})")
+    parser.add_argument("--location", default=None, help="Bin location to attach to logged events, e.g. 'Vanderbilt Dining Hall'")
     args = parser.parse_args()
 
     cap = cv2.VideoCapture(args.camera)
@@ -155,7 +161,7 @@ def main():
             "then re-run. If you have an external webcam, try --camera 1."
         )
 
-    client = ClassifierClient(args.url)
+    client = ClassifierClient(args.url, location=args.location)
     window = "TossIQ"
 
     try:

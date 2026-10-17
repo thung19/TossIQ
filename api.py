@@ -6,11 +6,14 @@ Two sorting entry points, matching the PRD's two-layer architecture:
                      returns a sort decision immediately, then enriches and
                      persists the event with the slower Qwen analysis (Layer 2)
                      in a background task so the caller never waits on it.
-- POST /classify -- direct advanced-analysis path (Layer 2 only). Used by
-                     webcam.py and for testing; also persists its result.
+- POST /classify -- direct advanced-analysis path (Layer 2 only). Used for
+                     testing; also persists its result.
 
 Everything else (catalog, dashboard stats, recommendations) is plain CRUD/
 aggregation over the OCI-backed tables in db.py (Layer 3).
+
+GET / serves the dashboard (static/index.html) -- a live view over the
+same stats/recommendations/products endpoints below.
 
 The models are loaded once at startup (see `lifespan`) and reused across
 requests via `app.state`.
@@ -25,6 +28,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.staticfiles import StaticFiles
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
 
@@ -272,3 +276,10 @@ def get_recommendations(limit: int = 20):
 def generate_recommendations(days: int = 30):
     new_texts = insights.generate_recommendations(days=days)
     return {"new_recommendations": new_texts}
+
+
+# ---------------------------------------------------------------------------
+# Dashboard UI -- mounted last so it never shadows the API routes above
+# ---------------------------------------------------------------------------
+
+app.mount("/", StaticFiles(directory="static", html=True), name="dashboard")
