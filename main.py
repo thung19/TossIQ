@@ -3,16 +3,14 @@ import sys
 from pathlib import Path
 
 import genai_vision
-from identify import load_model
 from sorting import classify, load_rules
 
 DEFAULT_IMAGE = Path("images/test.jpg")
 
 # Advanced-analysis backend handle, lazily loaded and cached here: `handle`
-# stays a parameter for backward compatibility with callers (api.py still
-# loads and passes identify.py's Qwen ModelHandle), but the advanced-
-# analysis step now runs on genai_vision's own OCI Generative AI client,
-# which this module manages independently of that parameter.
+# stays an accepted-but-unused parameter so callers written for the Qwen
+# variant (api.py, evaluate.py) need no signature changes. genai_vision
+# manages its own client independently of this parameter.
 _genai_handle = None
 
 
@@ -44,9 +42,8 @@ def run(image_path, handle=None, rules=None) -> dict:
 def main():
     image_path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_IMAGE
 
-    handle = load_model()
     print(f"Classifying {image_path}...")
-    result = run(image_path, handle=handle)
+    result = run(image_path)
 
     print("\nIdentification:")
     print(json.dumps(result["identification"], indent=2))

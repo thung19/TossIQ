@@ -26,7 +26,7 @@ WELL_FORMED_JSON = """
 
 
 def _make_handle():
-    return genai_vision.GenAIHandle(client=mock.Mock(), compartment_id="ocid1.compartment.test", model_id="google.gemini-2.5-pro")
+    return genai_vision.GenAIHandle(client=mock.Mock(), compartment_id="ocid1.compartment.test", model_id="cohere.command-a-vision")
 
 
 def _chat_response(text: str):
@@ -35,9 +35,7 @@ def _chat_response(text: str):
     content_item.text = text
     message = mock.Mock()
     message.content = [content_item]
-    choice = mock.Mock()
-    choice.message = message
-    response.data.chat_response.choices = [choice]
+    response.data.chat_response.message = message
     return response
 
 

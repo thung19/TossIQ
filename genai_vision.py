@@ -1,4 +1,4 @@
-"""Gemini 2.5 Pro (via OCI Generative AI) waste-item identification.
+"""Cohere Command A Vision (via OCI Generative AI) waste-item identification.
 
 Structured in parallel to oci_storage.py: non-secret request config (region,
 compartment, model id) comes from `.env` via `load_dotenv()`, same pattern
@@ -9,13 +9,23 @@ the standard OCI config file (`oci.config.from_file()`, default
 Storage keys -- that file is already set up and working, so this module
 never reads or requires its own `.env`-based OCI Generative AI credential.
 
+Cohere, not Gemini: this tenancy's Generative AI free-trial allows Cohere
+models on demand with no rate limit; Gemini and Grok are both capped at
+0 tokens/minute tenancy-wide until the account is upgraded (confirmed live
+via the OCI Limits API and a live 429 from Gemini), matching what OCI's own
+hackathon starter kit documents ("For the Free Trial, use the Cohere
+model... Grok is not supported in the Free Trial"). Cohere's multimodal
+chat API uses its own V2 request/message/content classes (CohereChatRequestV2
+etc.), not the generic ChatDetails shape Gemini/Grok/Llama share -- that is
+why this module's request construction looks different from a
+Gemini-targeting version.
+
 Returns the identification dict in the exact shape identify.py's
 parse_identification() does, so sorting.py's classify() and main.py's
 run() work unchanged regardless of which vision backend is wired in --
 the model is swapped, not the contract with the rest of the pipeline.
 """
 
-import base64
 import json
 import logging
 import os
@@ -26,23 +36,24 @@ import oci
 from oci.generative_ai_inference import GenerativeAiInferenceClient
 from oci.generative_ai_inference.models import (
     ChatDetails,
-    GenericChatRequest,
-    ImageContent,
-    ImageUrl,
-    JsonObjectResponseFormat,
+    CohereChatRequestV2,
+    CohereImageContentV2,
+    CohereImageUrlV2,
+    CohereResponseJsonFormat,
+    CohereTextContentV2,
+    CohereUserMessageV2,
     OnDemandServingMode,
-    TextContent,
-    UserMessage,
 )
 from dotenv import load_dotenv
 from PIL import Image
+import base64
 
 load_dotenv()
 
 logger = logging.getLogger("tossiq")
 
 DEFAULT_REGION = "us-chicago-1"
-DEFAULT_MODEL_ID = "google.gemini-2.5-pro"
+DEFAULT_MODEL_ID = "cohere.command-a-vision"
 
 # Same prompt text and "return ONLY valid JSON" contract as identify.py's
 # PROMPT -- the model backing advanced analysis is swapped, not the
@@ -97,10 +108,10 @@ def load_model() -> GenAIHandle:
 
 
 def _image_to_data_url(image: Image.Image) -> str:
-    """Encodes a PIL.Image as a base64 data: URL -- OCI's generic chat
-    request takes image content as a URL, and accepts a data: URL the
-    same way it accepts an http(s) one, so the image never needs to touch
-    disk or a public endpoint."""
+    """Encodes a PIL.Image as a base64 data: URL -- Cohere's multimodal
+    content takes an image as a URL and accepts a data: URL the same way
+    it accepts an http(s) one, so the image never needs to touch disk or
+    a public endpoint."""
     buffer = BytesIO()
     image.convert("RGB").save(buffer, format="JPEG")
     encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
@@ -141,8 +152,8 @@ def parse_identification(raw_text: str) -> dict:
 
 
 def identify_image(handle: GenAIHandle, image) -> dict:
-    """Runs Gemini 2.5 Pro (via OCI Generative AI) on one image and returns
-    a parsed identification dict with the same shape identify.py's
+    """Runs Cohere Command A Vision (via OCI Generative AI) on one image and
+    returns a parsed identification dict with the same shape identify.py's
     parse_identification() returns.
 
     `image` may be a filesystem path (str/Path) or an already-loaded
@@ -158,18 +169,18 @@ def identify_image(handle: GenAIHandle, image) -> dict:
     try:
         pil_image = image if isinstance(image, Image.Image) else Image.open(image)
 
-        chat_request = GenericChatRequest(
+        chat_request = CohereChatRequestV2(
             messages=[
-                UserMessage(
+                CohereUserMessageV2(
                     content=[
-                        TextContent(text=PROMPT),
-                        ImageContent(image_url=ImageUrl(url=_image_to_data_url(pil_image))),
+                        CohereTextContentV2(text=PROMPT),
+                        CohereImageContentV2(image_url=CohereImageUrlV2(url=_image_to_data_url(pil_image))),
                     ]
                 )
             ],
             max_tokens=600,
             temperature=0,
-            response_format=JsonObjectResponseFormat(),
+            response_format=CohereResponseJsonFormat(),
         )
         chat_details = ChatDetails(
             compartment_id=handle.compartment_id,
@@ -178,7 +189,7 @@ def identify_image(handle: GenAIHandle, image) -> dict:
         )
 
         response = handle.client.chat(chat_details)
-        raw_text = response.data.chat_response.choices[0].message.content[0].text
+        raw_text = response.data.chat_response.message.content[0].text
     except Exception as e:
         logger.exception("OCI Generative AI chat request failed")
         return {**fields, "parse_error": f"OCI Generative AI request failed: {e}", "raw": None}

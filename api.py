@@ -43,7 +43,6 @@ import insights
 import oci_storage
 from fast_sort import detect as fast_detect
 from fast_sort import load_fast_model
-from identify import load_model
 from main import run as run_advanced
 from sorting import load_rules
 
@@ -64,7 +63,9 @@ CONFIDENCE_FULL = 90
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.model_handle = load_model()
+    # Advanced-analysis model (Gemini via genai_vision, on this branch) is
+    # loaded and cached lazily inside main.run() itself, not here -- there is
+    # no local model to load at startup anymore.
     app.state.rules = load_rules()
     app.state.fast_model = load_fast_model()
     yield
@@ -194,7 +195,7 @@ async def classify(file: UploadFile = File(...), location: str | None = Form(Non
     image = _decode_upload(contents)
 
     try:
-        result = run_advanced(image, handle=app.state.model_handle, rules=app.state.rules)
+        result = run_advanced(image, rules=app.state.rules)
     except Exception:
         logger.exception("Inference failed")
         raise HTTPException(status_code=500, detail="Inference failed")
@@ -242,7 +243,7 @@ async def sort(
     background_tasks.add_task(
         _run_advanced_and_persist,
         image,
-        app.state.model_handle,
+        None,
         app.state.rules,
         location,
     )
@@ -292,7 +293,7 @@ async def enrich(
     background_tasks.add_task(
         _run_advanced_and_persist,
         image,
-        app.state.model_handle,
+        None,
         app.state.rules,
         location,
         parsed_captured_at,
