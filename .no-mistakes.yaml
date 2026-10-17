@@ -1,0 +1,8 @@
+# Per-repo no-mistakes overrides.
+
+# TossIQ is a hackathon project with no GitHub Actions CI configured and no
+# branch-protection required checks. Without this declaration, the pipeline's
+# CI step waits indefinitely for checks that will never register. This is a
+# deliberate, trusted statement that an empty check list on a PR head means
+# "nothing to check," not "not ready yet."
+no_ci: true
