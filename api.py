@@ -39,6 +39,7 @@ from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
 
 import db
+import image_embed
 import insights
 import oci_storage
 from fast_sort import detect as fast_detect
@@ -155,7 +156,16 @@ def _persist_advanced_result(
     location: str | None,
     captured_at: datetime | None = None,
 ) -> tuple[int, dict | None]:
-    matched_product = db.match_product(identification.get("object"))
+    matched_product = None
+    if db.has_any_reference_embedding():
+        embedding = image_embed.embed_image(image)
+        if embedding is not None:
+            matched_product = db.match_product_by_image(embedding)
+    if matched_product is None:
+        # Fall back to text-overlap matching -- the common case until an
+        # admin uploads a reference image for a catalog product, or when
+        # the embedding call itself failed.
+        matched_product = db.match_product(identification.get("object"))
     image_key = _upload_event_image(image)
     hazard_flag = identification.get("hazard_flag")
     event_id = db.insert_waste_event(
@@ -326,6 +336,31 @@ def create_product(product: ProductIn):
         unit_cost=product.unit_cost,
     )
     return {"product_id": product_id}
+
+
+@app.post("/products/{product_id}/reference-image")
+async def upload_product_reference_image(product_id: int, file: UploadFile = File(...)):
+    """Uploads a reference photo for a catalog product so future scanned
+    items can be matched to it by visual similarity (db.match_product_by_image),
+    rather than only by text-overlap against the model's generic object
+    description -- per PRD section 2C's "configurable recognition without
+    requiring ... retrain[ing]" goal.
+
+    Unlike the background disposal-event pipeline, this is a captain-facing
+    action: an embedding failure is reported as a 500, not silently no-op'd.
+    """
+    if not any(p["product_id"] == product_id for p in db.list_products()):
+        raise HTTPException(status_code=404, detail=f"Product {product_id} not found")
+
+    contents = await _read_and_validate_upload(file)
+    image = _decode_upload(contents)
+
+    embedding = image_embed.embed_image(image)
+    if embedding is None:
+        raise HTTPException(status_code=500, detail="Failed to embed reference image")
+
+    db.set_product_reference_embedding(product_id, embedding)
+    return {"status": "ok"}
 
 
 # ---------------------------------------------------------------------------
