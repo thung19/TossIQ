@@ -4,7 +4,7 @@ Two sorting entry points, matching the PRD's two-layer architecture:
 
 - POST /sort     -- fast path (Layer 1). Runs the lightweight YOLOE detector,
                      returns a sort decision immediately, then enriches and
-                     persists the event with the slower Qwen analysis (Layer 2)
+                     persists the event with the slower advanced analysis (Layer 2)
                      in a background task so the caller never waits on it.
 - POST /classify -- direct advanced-analysis path (Layer 2 only). Used for
                      testing; also persists its result.
@@ -51,11 +51,11 @@ logger = logging.getLogger("tossiq")
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
 
-# Heuristic confidence (0-100) for the advanced path -- Qwen does not report
-# a calibrated numeric confidence, so this is derived from how much of the
-# identification parsed cleanly. Stored in WASTE_EVENTS.confidence, which the
-# dashboard should present as a model-derived estimate, not a measured fact
-# (PRD design principle 3).
+# Heuristic confidence (0-100) for the advanced path -- the advanced-analysis
+# model does not report a calibrated numeric confidence, so this is derived
+# from how much of the identification parsed cleanly. Stored in
+# WASTE_EVENTS.confidence, which the dashboard should present as a
+# model-derived estimate, not a measured fact (PRD design principle 3).
 CONFIDENCE_PARSE_ERROR = 20
 CONFIDENCE_PARTIAL = 55
 CONFIDENCE_FULL = 90
@@ -63,9 +63,9 @@ CONFIDENCE_FULL = 90
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Advanced-analysis model (Gemini via genai_vision, on this branch) is
-    # loaded and cached lazily inside main.run() itself, not here -- there is
-    # no local model to load at startup anymore.
+    # Advanced-analysis model (Cohere Command A Vision via genai_vision, on
+    # this branch) is loaded and cached lazily inside main.run() itself, not
+    # here -- there is no local model to load at startup anymore.
     app.state.rules = load_rules()
     app.state.fast_model = load_fast_model()
     yield
@@ -173,7 +173,7 @@ def _persist_advanced_result(
 def _run_advanced_and_persist(
     image: Image.Image, handle, rules, location: str | None, captured_at: datetime | None = None
 ) -> None:
-    """Background-task body: run the slow Qwen analysis and persist the result.
+    """Background-task body: run the slow advanced analysis and persist the result.
 
     Never raises into the caller -- this runs detached from the request that
     already returned a fast /sort response, so failures are logged, not
@@ -265,7 +265,7 @@ async def enrich(
 
     The caller (edge/pi_sort_client.py) already ran the fast model locally
     and triggered the physical sort there -- this endpoint only runs the
-    slow Qwen analysis and persists the result, same as /sort's background
+    slow advanced analysis and persists the result, same as /sort's background
     task. The fast category/label/confidence are informational only;
     WASTE_EVENTS.CATEGORY still records the advanced-analysis category,
     same as today. captured_at (ISO 8601) is the edge device's capture-time

@@ -1,10 +1,10 @@
 """Fast, lightweight local object detection + rough sort decision.
 
 This is Layer 1 from the PRD: a cheap model that gives an immediate sort
-decision so physical sorting never waits on the slower Qwen vision-language
-model in identify.py. It intentionally does NOT attempt specific product
-identification -- that nuance is Layer 2's job (identify.py, run async by
-api.py's /sort endpoint).
+decision so physical sorting never waits on the slower advanced-analysis
+vision-language model. It intentionally does NOT attempt specific product
+identification -- that nuance is Layer 2's job, run async by api.py's
+/sort endpoint.
 
 Uses YOLOE (open-vocabulary detector) with a fixed label set rather than
 training a custom model, per PRD section 9 ("Do not ... train large custom
