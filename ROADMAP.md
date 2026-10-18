@@ -46,5 +46,6 @@ hardware simulation presented as real sensor data.
    data; no fabricated device fleet.
 
 ## Status
-Stages not yet started. Prerequisite work (hazard fields, visual SKU
-matching) is finishing validation now.
+Stages 1 (sidebar navigation) and 2 (hazard review workflow) are merged.
+Stage 2's live workflow (trigger a hazard flag, acknowledge it, resolve it)
+awaits captain verification against real OCI credentials. Stage 3 is next.
