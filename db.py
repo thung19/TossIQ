@@ -9,12 +9,22 @@ own DDL and exist in OCI without tracked definitions. The campus-fleet tables
 (CAN_MODELS / BUILDINGS / CANS / CAN_READINGS / SERVICE_EVENTS, and
 WASTE_EVENTS.BIN_ID) are defined in schema/ and applied by schema/apply.py.
 
-Connections are opened per call rather than pooled -- simplest thing that
-works for a hackathon demo's request volume. Swap for a oracledb.create_pool()
-if this becomes a bottleneck.
+Connections come from a pool. They used to be opened per call, which the
+previous version of this docstring described as "the simplest thing that
+works" with a note to swap in a pool if it became a bottleneck. It did:
+opening a connection to this ADB costs ~0.29 s against ~0.09 s for the
+query it then runs, so a page issuing eight aggregates spent three quarters
+of its time on handshakes. GET /initiatives, which measures every goal
+against live data, took four seconds; pooled it takes well under one.
+
+The pool is created lazily on first use and shared process-wide. If it
+cannot be created -- a wallet problem, a version of oracledb without
+pooling -- get_connection falls back to a direct connect rather than
+failing, because a slow dashboard is better than a broken one.
 """
 
 import os
+import threading
 from contextlib import contextmanager
 
 import oracledb
@@ -22,18 +32,70 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Small on purpose. This is one API process serving a dashboard, not a
+# fleet of workers, and an Autonomous DB's own session limits are the thing
+# to stay well inside.
+POOL_MIN = int(os.environ.get("DB_POOL_MIN") or "1")
+POOL_MAX = int(os.environ.get("DB_POOL_MAX") or "8")
+
+_pool = None
+_pool_lock = threading.Lock()
+_pool_failed = False
+
+
+def _connect_kwargs() -> dict:
+    wallet_dir = os.environ["DB_WALLET_DIR"]
+    return {
+        "user": os.environ["DB_USER"],
+        "password": os.environ["DB_PASSWORD"],
+        "dsn": os.environ["DB_DSN"],
+        "config_dir": wallet_dir,
+        "wallet_location": wallet_dir,
+        "wallet_password": os.environ["DB_WALLET_PASSWORD"],
+    }
+
+
+def _get_pool():
+    """The shared pool, created on first use.
+
+    Double-checked under a lock because the camera service persists
+    detections from its own thread while the API serves requests, so first
+    use is genuinely concurrent.
+    """
+    global _pool, _pool_failed
+    if _pool is not None or _pool_failed:
+        return _pool
+    with _pool_lock:
+        if _pool is not None or _pool_failed:
+            return _pool
+        try:
+            _pool = oracledb.create_pool(
+                min=POOL_MIN,
+                max=POOL_MAX,
+                increment=1,
+                # Hand back a connection that has gone stale rather than
+                # letting a caller discover it mid-query.
+                ping_interval=60,
+                getmode=oracledb.POOL_GETMODE_WAIT,
+                **_connect_kwargs(),
+            )
+        except Exception:
+            # Falling back rather than raising: a slow dashboard beats a
+            # broken one, and the cause belongs in the log, not in a 500.
+            _pool_failed = True
+            _pool = None
+    return _pool
+
 
 @contextmanager
 def get_connection():
-    wallet_dir = os.environ["DB_WALLET_DIR"]
-    connection = oracledb.connect(
-        user=os.environ["DB_USER"],
-        password=os.environ["DB_PASSWORD"],
-        dsn=os.environ["DB_DSN"],
-        config_dir=wallet_dir,
-        wallet_location=wallet_dir,
-        wallet_password=os.environ["DB_WALLET_PASSWORD"],
-    )
+    """A connection, pooled where possible.
+
+    `.close()` on a pooled connection returns it to the pool rather than
+    tearing it down, so every existing caller keeps working unchanged.
+    """
+    pool = _get_pool()
+    connection = pool.acquire() if pool is not None else oracledb.connect(**_connect_kwargs())
     try:
         yield connection
     finally:
@@ -1623,6 +1685,288 @@ def can_activity_cells(
             }
             for can_id, day_of_week, hour_of_day, n in cursor.fetchall()
         ]
+
+
+
+# ---------------------------------------------------------------------------
+# Initiatives and projects (the workspace)
+# ---------------------------------------------------------------------------
+# An initiative stores a measurement recipe rather than a number: METRIC
+# plus the SCOPE_* columns, which mirror the analytics filter set. Progress
+# is recomputed by initiatives.py on every read, so a goal cannot drift from
+# the data it is about.
+
+_INITIATIVE_COLUMNS = (
+    "name", "description", "owner", "metric", "direction",
+    "scope_building_id", "scope_category", "scope_material", "scope_object",
+    "scope_supplier", "baseline_value", "baseline_window_days", "target_value",
+    "target_date", "status",
+)
+
+_INITIATIVE_SELECT = """
+SELECT initiative_id, name, description, owner, metric, direction,
+       scope_building_id, scope_category, scope_material, scope_object,
+       scope_supplier, baseline_value, baseline_window_days, baseline_captured_at,
+       target_value, target_date, status, created_at, updated_at
+FROM initiatives
+"""
+
+
+def _initiative_rows(cursor) -> list[dict]:
+    cols = [d[0].lower() for d in cursor.description]
+    rows = [dict(zip(cols, row)) for row in cursor.fetchall()]
+    for row in rows:
+        for key in ("baseline_captured_at", "created_at", "updated_at"):
+            if row.get(key):
+                row[key] = row[key].strftime("%Y-%m-%d %H:%M:%S")
+        if row.get("target_date"):
+            row["target_date"] = row["target_date"].strftime("%Y-%m-%d")
+        for key in ("baseline_value", "target_value"):
+            if row.get(key) is not None:
+                row[key] = float(row[key])
+    return rows
+
+
+def list_initiatives(status: str | None = None) -> list[dict]:
+    where = "WHERE status = :status" if status else ""
+    binds = {"status": status} if status else {}
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            f"{_INITIATIVE_SELECT} {where} ORDER BY "
+            "CASE status WHEN 'active' THEN 0 WHEN 'achieved' THEN 1 ELSE 2 END, "
+            "target_date NULLS LAST, initiative_id",
+            **binds,
+        )
+        return _initiative_rows(cursor)
+
+
+def get_initiative(initiative_id: int) -> dict | None:
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            f"{_INITIATIVE_SELECT} WHERE initiative_id = :initiative_id",
+            initiative_id=initiative_id,
+        )
+        rows = _initiative_rows(cursor)
+        return rows[0] if rows else None
+
+
+def insert_initiative(**columns) -> int:
+    """Creates one initiative. BASELINE_CAPTURED_AT is set here rather than
+    supplied, because the baseline is only meaningful alongside the moment
+    it was taken."""
+    unknown = set(columns) - set(_INITIATIVE_COLUMNS)
+    if unknown:
+        raise ValueError(f"Not initiative columns: {sorted(unknown)}")
+
+    names = list(columns)
+    placeholders = ", ".join(f":{name}" for name in names)
+    with get_connection() as conn, conn.cursor() as cursor:
+        initiative_id_var = cursor.var(int)
+        cursor.execute(
+            f"""
+            INSERT INTO initiatives ({", ".join(names)}, baseline_captured_at)
+            VALUES ({placeholders}, SYSTIMESTAMP)
+            RETURNING initiative_id INTO :initiative_id
+            """,
+            initiative_id=initiative_id_var,
+            **columns,
+        )
+        conn.commit()
+        return initiative_id_var.getvalue()[0]
+
+
+def update_initiative(initiative_id: int, **columns) -> bool:
+    """Updates the given columns. BASELINE_VALUE is deliberately not
+    updatable: a baseline that moves is not a baseline, and letting one
+    slide is the easiest way to make a missed target look met."""
+    unknown = set(columns) - (set(_INITIATIVE_COLUMNS) - {"baseline_value"})
+    if unknown:
+        raise ValueError(f"Not updatable initiative columns: {sorted(unknown)}")
+    if not columns:
+        return False
+
+    assignments = ", ".join(f"{name} = :{name}" for name in columns)
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            f"""
+            UPDATE initiatives SET {assignments}, updated_at = SYSTIMESTAMP
+             WHERE initiative_id = :initiative_id
+            """,
+            initiative_id=initiative_id,
+            **columns,
+        )
+        changed = cursor.rowcount
+        conn.commit()
+        return changed > 0
+
+
+
+def backdate_initiative_baseline(initiative_id: int, days_ago: int) -> bool:
+    """Moves an initiative's baseline capture time into the past.
+
+    Only the demo seed uses this. A baseline is meaningful alongside the
+    moment it was taken, and seeded goals are meant to read as having been
+    set weeks ago rather than this morning -- but the timestamp has to say
+    so, or the page claims a baseline was measured today and then shows
+    progress away from it, which is incoherent.
+    """
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE initiatives
+               SET baseline_captured_at = SYSTIMESTAMP - :days_ago,
+                   created_at = SYSTIMESTAMP - :days_ago
+             WHERE initiative_id = :initiative_id
+            """,
+            initiative_id=initiative_id,
+            days_ago=days_ago,
+        )
+        changed = cursor.rowcount
+        conn.commit()
+        return changed > 0
+
+
+def delete_initiative(initiative_id: int) -> bool:
+    """Removes an initiative and detaches its projects.
+
+    The projects survive, orphaned rather than deleted: the work may have
+    happened and may belong to another goal, and quietly destroying a record
+    of what somebody did because a target was retired is not the database's
+    decision to make.
+    """
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            "UPDATE projects SET initiative_id = NULL WHERE initiative_id = :initiative_id",
+            initiative_id=initiative_id,
+        )
+        cursor.execute(
+            "DELETE FROM initiatives WHERE initiative_id = :initiative_id",
+            initiative_id=initiative_id,
+        )
+        changed = cursor.rowcount
+        conn.commit()
+        return changed > 0
+
+
+_PROJECT_COLUMNS = (
+    "initiative_id", "name", "description", "owner", "status",
+    "expected_impact", "expected_impact_note", "source_recommendation_key",
+    "due_date", "started_at", "completed_at",
+)
+
+_PROJECT_SELECT = """
+SELECT project_id, initiative_id, name, description, owner, status,
+       expected_impact, expected_impact_note, source_recommendation_key,
+       due_date, started_at, completed_at, created_at, updated_at
+FROM projects
+"""
+
+
+def _project_rows(cursor) -> list[dict]:
+    cols = [d[0].lower() for d in cursor.description]
+    rows = [dict(zip(cols, row)) for row in cursor.fetchall()]
+    for row in rows:
+        for key in ("started_at", "completed_at", "created_at", "updated_at"):
+            if row.get(key):
+                row[key] = row[key].strftime("%Y-%m-%d %H:%M:%S")
+        if row.get("due_date"):
+            row["due_date"] = row["due_date"].strftime("%Y-%m-%d")
+        if row.get("expected_impact") is not None:
+            row["expected_impact"] = float(row["expected_impact"])
+    return rows
+
+
+def list_projects(initiative_id: int | None = None, status: str | None = None) -> list[dict]:
+    clauses = []
+    binds: dict = {}
+    if initiative_id is not None:
+        clauses.append("initiative_id = :initiative_id")
+        binds["initiative_id"] = initiative_id
+    if status:
+        clauses.append("status = :status")
+        binds["status"] = status
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            f"{_PROJECT_SELECT} {where} ORDER BY "
+            "CASE status WHEN 'in_progress' THEN 0 WHEN 'blocked' THEN 1 "
+            "WHEN 'proposed' THEN 2 WHEN 'done' THEN 3 ELSE 4 END, "
+            "due_date NULLS LAST, project_id",
+            **binds,
+        )
+        return _project_rows(cursor)
+
+
+def get_project(project_id: int) -> dict | None:
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            f"{_PROJECT_SELECT} WHERE project_id = :project_id", project_id=project_id
+        )
+        rows = _project_rows(cursor)
+        return rows[0] if rows else None
+
+
+def insert_project(**columns) -> int:
+    unknown = set(columns) - set(_PROJECT_COLUMNS)
+    if unknown:
+        raise ValueError(f"Not project columns: {sorted(unknown)}")
+    names = list(columns)
+    placeholders = ", ".join(f":{name}" for name in names)
+    with get_connection() as conn, conn.cursor() as cursor:
+        project_id_var = cursor.var(int)
+        cursor.execute(
+            f"""
+            INSERT INTO projects ({", ".join(names)})
+            VALUES ({placeholders})
+            RETURNING project_id INTO :project_id
+            """,
+            project_id=project_id_var,
+            **columns,
+        )
+        conn.commit()
+        return project_id_var.getvalue()[0]
+
+
+def update_project(project_id: int, **columns) -> bool:
+    unknown = set(columns) - set(_PROJECT_COLUMNS)
+    if unknown:
+        raise ValueError(f"Not project columns: {sorted(unknown)}")
+    if not columns:
+        return False
+    assignments = ", ".join(f"{name} = :{name}" for name in columns)
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            f"""
+            UPDATE projects SET {assignments}, updated_at = SYSTIMESTAMP
+             WHERE project_id = :project_id
+            """,
+            project_id=project_id,
+            **columns,
+        )
+        changed = cursor.rowcount
+        conn.commit()
+        return changed > 0
+
+
+def delete_project(project_id: int) -> bool:
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute("DELETE FROM projects WHERE project_id = :project_id",
+                       project_id=project_id)
+        changed = cursor.rowcount
+        conn.commit()
+        return changed > 0
+
+
+def project_keys_in_use() -> set[str]:
+    """Recommendation keys already turned into a project, so the
+    recommendations page can show which of its cards are being acted on
+    rather than offering the same work twice."""
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            "SELECT DISTINCT source_recommendation_key FROM projects "
+            "WHERE source_recommendation_key IS NOT NULL AND status <> 'cancelled'"
+        )
+        return {row[0] for row in cursor.fetchall()}
 
 
 # --- Fleet inventory upserts (used by seed_campus.py; keyed on the natural

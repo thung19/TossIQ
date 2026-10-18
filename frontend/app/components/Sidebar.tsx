@@ -103,6 +103,15 @@ const PRIMARY: NavItem[] = [
   { href: "/asku", label: "ASKU assistant", icon: Icon.ask },
 ];
 
+// The workspace group: goals, and the work that moves them. Separated from
+// the monitoring pages above because they are the only part of the product
+// somebody writes to rather than reads.
+const WORKSPACE: NavItem[] = [
+  { href: "/initiatives", label: "Initiatives", icon: Icon.hex },
+  { href: "/projects", label: "Projects", icon: Icon.sq },
+];
+
+
 export default function Sidebar({
   cameraOnline,
   lastInferenceMs,
@@ -143,16 +152,16 @@ export default function Sidebar({
 
       <div className="group-label">workspace</div>
       <nav className="nav-group">
-        <div className="nav-row static">
-          <span className="rail" />
-          <span className="nav-icon">{Icon.hex}</span>
-          <span className="nav-label">Initiatives</span>
-        </div>
-        <div className="nav-row static">
-          <span className="rail" />
-          <span className="nav-icon">{Icon.sq}</span>
-          <span className="nav-label">Projects</span>
-        </div>
+        {WORKSPACE.map((item) => {
+          const active = pathname === item.href;
+          return (
+            <Link key={item.href} href={item.href} className={`nav-row ${active ? "active" : ""}`}>
+              <span className="rail" />
+              <span className="nav-icon">{item.icon}</span>
+              <span className="nav-label">{item.label}</span>
+            </Link>
+          );
+        })}
       </nav>
 
       <div className="sidebar-footer">

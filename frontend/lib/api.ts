@@ -719,3 +719,150 @@ export const SEVERITY_RANK: Record<HazardSeverity, number> = {
   medium: 2,
   unclassified: 3,
 };
+
+
+// --- Initiatives and projects -------------------------------------------
+// An initiative stores a measurement recipe, not a number. `metric` says
+// what to measure and the scope fields say over what slice, so
+// `current_value` is recomputed from logged disposals on every read.
+//
+// `progress_percent` is the distance travelled from baseline to target, not
+// current-over-target: for a reduction goal that ratio exceeds 1 while you
+// are failing, which reads as success. It can go negative, and that is the
+// point -- "no progress" and "losing ground" are different facts.
+
+export type InitiativeMetric =
+  | "items"
+  | "landfill_items"
+  | "cost"
+  | "mass"
+  | "diversion_rate"
+  | "contamination_rate"
+  | "hazard_events"
+  | "review_accuracy";
+
+export type MetricSpec = {
+  label: string;
+  unit: string;
+  format: "count" | "money" | "mass" | "percent";
+  lower_is_better: boolean;
+  help: string;
+};
+
+export type ProgressState =
+  | "achieved"
+  | "near_target"
+  | "in_progress"
+  | "off_track"
+  | "regressing"
+  | "unmeasured";
+
+export type ProjectStatus = "proposed" | "in_progress" | "blocked" | "done" | "cancelled";
+
+export type Project = {
+  project_id: number;
+  initiative_id: number | null;
+  name: string;
+  description: string | null;
+  owner: string | null;
+  status: ProjectStatus;
+  /** What the action CLAIMS it will contribute, in its initiative's units.
+   * Never added to measured progress: a pile of optimistic estimates must
+   * not read as achievement. */
+  expected_impact: number | null;
+  expected_impact_note: string | null;
+  source_recommendation_key: string | null;
+  due_date: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string | null;
+  initiative_name?: string | null;
+  initiative_metric?: string | null;
+};
+
+export type Initiative = {
+  initiative_id: number;
+  name: string;
+  description: string | null;
+  owner: string | null;
+  metric: InitiativeMetric;
+  direction: "reduce" | "increase";
+  scope_building_id: number | null;
+  scope_category: string | null;
+  scope_material: string | null;
+  scope_object: string | null;
+  scope_supplier: string | null;
+  baseline_value: number | null;
+  baseline_window_days: number;
+  baseline_captured_at: string | null;
+  target_value: number;
+  target_date: string | null;
+  status: string;
+  created_at: string | null;
+
+  metric_label: string;
+  unit: string;
+  format: MetricSpec["format"];
+  metric_help: string;
+  scope_label: string;
+  current_value: number | null;
+  progress_percent: number | null;
+  progress_state: ProgressState;
+  distance_to_target: number | null;
+  days_remaining: number | null;
+  project_count: number;
+  projects_by_status: Record<string, number>;
+  projects_done: number;
+  projects_active: number;
+  claimed_impact: number;
+  projects: Project[];
+};
+
+export type InitiativeReport = {
+  initiatives: Initiative[];
+  total: number;
+  by_state: Record<string, number>;
+  achieved: number;
+  regressing: number;
+  /** Active goals with no project under them. A goal with no work is a
+   * wish, and the page says so rather than showing an encouraging bar. */
+  unbacked: { initiative_id: number; name: string }[];
+  overdue: { initiative_id: number; name: string; days_overdue: number }[];
+  metrics: Record<string, MetricSpec>;
+  note: string;
+};
+
+export const PROGRESS_LABEL: Record<ProgressState, string> = {
+  achieved: "achieved",
+  near_target: "near target",
+  in_progress: "on the way",
+  off_track: "off track",
+  regressing: "losing ground",
+  unmeasured: "not measurable",
+};
+
+export const PROJECT_STATUS_LABEL: Record<ProjectStatus, string> = {
+  proposed: "proposed",
+  in_progress: "in progress",
+  blocked: "blocked",
+  done: "done",
+  cancelled: "cancelled",
+};
+
+/** Formats a metric value in its own units. */
+export function formatMetric(
+  value: number | null | undefined,
+  format: MetricSpec["format"]
+): string {
+  if (value == null) return "—";
+  if (format === "money") {
+    return `$${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  }
+  if (format === "percent") return `${value.toFixed(1)}%`;
+  if (format === "mass") {
+    return value >= 1
+      ? `${value.toLocaleString(undefined, { maximumFractionDigits: 1 })} kg`
+      : `${Math.round(value * 1000)} g`;
+  }
+  return value.toLocaleString(undefined, { maximumFractionDigits: 0 });
+}

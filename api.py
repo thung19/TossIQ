@@ -55,6 +55,7 @@ import db
 import fleet
 import hazards
 import image_embed
+import initiatives
 import insights
 import oci_storage
 import recommendations
@@ -743,6 +744,211 @@ def get_analytics_filter_options(days: int = 30):
     """The filter values actually present in the window, so the filter bar
     never offers a choice that yields an empty page."""
     return db.analytics_filter_options(days=days)
+
+
+
+# ---------------------------------------------------------------------------
+# Initiatives and projects (the workspace)
+# ---------------------------------------------------------------------------
+# An initiative stores what to measure and over what slice; its progress is
+# recomputed from logged disposals on every read. Creating one MEASURES the
+# baseline here rather than accepting it from the client, so a goal cannot
+# be born with a flattering starting point.
+
+class InitiativeIn(BaseModel):
+    name: Annotated[str, StringConstraints(min_length=1, max_length=200)]
+    description: Annotated[str, StringConstraints(max_length=1000)] | None = None
+    owner: Annotated[str, StringConstraints(max_length=120)] | None = None
+    metric: str
+    direction: str = "reduce"
+    scope_building_id: int | None = None
+    scope_category: Annotated[str, StringConstraints(max_length=40)] | None = None
+    scope_material: Annotated[str, StringConstraints(max_length=80)] | None = None
+    scope_object: Annotated[str, StringConstraints(max_length=160)] | None = None
+    scope_supplier: Annotated[str, StringConstraints(max_length=255)] | None = None
+    baseline_window_days: int = 30
+    target_value: float
+    target_date: str | None = None
+
+
+class InitiativePatch(BaseModel):
+    name: Annotated[str, StringConstraints(min_length=1, max_length=200)] | None = None
+    description: Annotated[str, StringConstraints(max_length=1000)] | None = None
+    owner: Annotated[str, StringConstraints(max_length=120)] | None = None
+    target_value: float | None = None
+    target_date: str | None = None
+    status: str | None = None
+
+
+class ProjectIn(BaseModel):
+    initiative_id: int | None = None
+    name: Annotated[str, StringConstraints(min_length=1, max_length=200)]
+    description: Annotated[str, StringConstraints(max_length=1000)] | None = None
+    owner: Annotated[str, StringConstraints(max_length=120)] | None = None
+    status: str = "proposed"
+    expected_impact: float | None = None
+    expected_impact_note: Annotated[str, StringConstraints(max_length=400)] | None = None
+    source_recommendation_key: Annotated[str, StringConstraints(max_length=200)] | None = None
+    due_date: str | None = None
+
+
+class ProjectPatch(BaseModel):
+    initiative_id: int | None = None
+    name: Annotated[str, StringConstraints(min_length=1, max_length=200)] | None = None
+    description: Annotated[str, StringConstraints(max_length=1000)] | None = None
+    owner: Annotated[str, StringConstraints(max_length=120)] | None = None
+    status: str | None = None
+    expected_impact: float | None = None
+    expected_impact_note: Annotated[str, StringConstraints(max_length=400)] | None = None
+    due_date: str | None = None
+
+
+def _parse_date(value: str | None, field: str):
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"{field} must be YYYY-MM-DD")
+
+
+@app.get("/initiatives")
+def get_initiatives(status: str | None = None):
+    """Every goal with live progress measured from logged disposals."""
+    return initiatives.list_resolved(status=status)
+
+
+@app.get("/initiatives/{initiative_id}")
+def get_initiative(initiative_id: int):
+    initiative = db.get_initiative(initiative_id)
+    if initiative is None:
+        raise HTTPException(status_code=404, detail=f"Initiative {initiative_id} not found")
+    building_names = {b["building_id"]: b["name"] for b in db.list_buildings()}
+    return initiatives.resolve(
+        initiative, db.list_projects(initiative_id=initiative_id), building_names
+    )
+
+
+@app.post("/initiatives")
+def create_initiative(body: InitiativeIn):
+    """Creates a goal and MEASURES its baseline from current data.
+
+    The baseline is not accepted from the client. A goal whose starting
+    point can be supplied is a goal that can be born already half met, and
+    the whole claim of this page is that progress is measured rather than
+    asserted.
+    """
+    if body.metric not in initiatives.METRICS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown metric {body.metric!r}; expected one of "
+                   f"{sorted(initiatives.METRICS)}",
+        )
+    if body.direction not in ("reduce", "increase"):
+        raise HTTPException(status_code=400, detail="direction must be 'reduce' or 'increase'")
+
+    columns = body.model_dump(exclude_none=True)
+    columns.pop("target_date", None)
+    target_date = _parse_date(body.target_date, "target_date")
+    if target_date:
+        columns["target_date"] = target_date
+    columns["status"] = "active"
+
+    baseline = initiatives.measure({**columns, "baseline_window_days": body.baseline_window_days})
+    columns["baseline_value"] = round(baseline, 3) if baseline is not None else None
+
+    initiative_id = db.insert_initiative(**columns)
+    return get_initiative(initiative_id)
+
+
+@app.patch("/initiatives/{initiative_id}")
+def patch_initiative(initiative_id: int, body: InitiativePatch):
+    """Updates a goal. The baseline is deliberately not editable -- see
+    db.update_initiative."""
+    columns = body.model_dump(exclude_none=True)
+    if "status" in columns and columns["status"] not in initiatives.STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"status must be one of {list(initiatives.STATUSES)}",
+        )
+    if "target_date" in columns:
+        columns["target_date"] = _parse_date(columns["target_date"], "target_date")
+    if not db.update_initiative(initiative_id, **columns):
+        raise HTTPException(status_code=404, detail=f"Initiative {initiative_id} not found")
+    return get_initiative(initiative_id)
+
+
+@app.delete("/initiatives/{initiative_id}")
+def remove_initiative(initiative_id: int):
+    """Deletes a goal. Its projects are detached, not deleted: the work may
+    have happened, and may belong to another goal."""
+    if not db.delete_initiative(initiative_id):
+        raise HTTPException(status_code=404, detail=f"Initiative {initiative_id} not found")
+    return {"initiative_id": initiative_id, "deleted": True}
+
+
+@app.get("/projects")
+def get_projects(initiative_id: int | None = None, status: str | None = None):
+    """The actions. Each carries the initiative it serves, so the list reads
+    as work towards goals rather than a detached to-do list."""
+    projects = db.list_projects(initiative_id=initiative_id, status=status)
+    names = {row["initiative_id"]: row for row in db.list_initiatives()}
+    for project in projects:
+        parent = names.get(project["initiative_id"])
+        project["initiative_name"] = parent["name"] if parent else None
+        project["initiative_metric"] = parent["metric"] if parent else None
+    return projects
+
+
+@app.post("/projects")
+def create_project(body: ProjectIn):
+    if body.status not in initiatives.PROJECT_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"status must be one of {list(initiatives.PROJECT_STATUSES)}",
+        )
+    if body.initiative_id is not None and db.get_initiative(body.initiative_id) is None:
+        raise HTTPException(
+            status_code=400, detail=f"Initiative {body.initiative_id} does not exist"
+        )
+    columns = body.model_dump(exclude_none=True)
+    columns.pop("due_date", None)
+    due_date = _parse_date(body.due_date, "due_date")
+    if due_date:
+        columns["due_date"] = due_date
+    project_id = db.insert_project(**columns)
+    return db.get_project(project_id)
+
+
+@app.patch("/projects/{project_id}")
+def patch_project(project_id: int, body: ProjectPatch):
+    """Updates a project. Moving it to 'done' stamps the completion time
+    here rather than trusting the client's clock."""
+    columns = body.model_dump(exclude_none=True)
+    if "status" in columns:
+        if columns["status"] not in initiatives.PROJECT_STATUSES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"status must be one of {list(initiatives.PROJECT_STATUSES)}",
+            )
+        if columns["status"] == "done":
+            columns["completed_at"] = datetime.now()
+        elif columns["status"] == "in_progress":
+            existing = db.get_project(project_id)
+            if existing and not existing.get("started_at"):
+                columns["started_at"] = datetime.now()
+    if "due_date" in columns:
+        columns["due_date"] = _parse_date(columns["due_date"], "due_date")
+    if not db.update_project(project_id, **columns):
+        raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+    return db.get_project(project_id)
+
+
+@app.delete("/projects/{project_id}")
+def remove_project(project_id: int):
+    if not db.delete_project(project_id):
+        raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+    return {"project_id": project_id, "deleted": True}
 
 
 # ---------------------------------------------------------------------------
