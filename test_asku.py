@@ -322,7 +322,10 @@ class EmptyWindowWithOlderDataPromptTests(unittest.TestCase):
 
 
 class CappingTests(unittest.TestCase):
-    def test_long_sections_are_truncated_with_the_full_row_count_stated(self):
+    def test_the_location_section_keeps_the_highest_counts_not_the_first_names(self):
+        # db.stats_locations orders by location name, so the busiest bin can
+        # sit past the cap. Truncating by name would let the model name a
+        # lower-count bin as the maximum it was shown.
         locations = [
             {"location": f"BIN-{i:02d}", "category": "recycling", "count": i}
             for i in range(asku.MAX_LOCATION_ROWS + 5)
@@ -333,9 +336,18 @@ class CappingTests(unittest.TestCase):
         lines = asku.observation_sections(observations)[4]["lines"]
 
         self.assertEqual(len(lines), asku.MAX_LOCATION_ROWS + 1)
+        busiest = max(locations, key=lambda row: row["count"])
+        self.assertIn(
+            f"{busiest['location']} / recycling: {busiest['count']} items", lines
+        )
+        quietest = min(locations, key=lambda row: row["count"])
+        self.assertNotIn(
+            f"{quietest['location']} / recycling: {quietest['count']} items", lines
+        )
         self.assertEqual(
             lines[-1],
-            f"(showing the first {asku.MAX_LOCATION_ROWS} of {len(locations)} rows)",
+            f"(showing {asku.MAX_LOCATION_ROWS} of {len(locations)} rows: "
+            f"the highest-count location/category pairs; the other 5 are not shown)",
         )
 
     def test_the_product_catalog_section_is_capped(self):
@@ -357,27 +369,150 @@ class CappingTests(unittest.TestCase):
         self.assertEqual(len(lines), asku.MAX_PRODUCT_ROWS + 1)
         self.assertEqual(
             lines[-1],
-            f"(showing the first {asku.MAX_PRODUCT_ROWS} of {len(products)} rows)",
+            f"(showing {asku.MAX_PRODUCT_ROWS} of {len(products)} rows: "
+            f"alphabetically first by product name; the other 7 are not shown)",
         )
 
-    def test_the_per_day_trend_section_is_capped(self):
-        overview = dict(
-            EMPTY_OVERVIEW,
-            total_items=asku.MAX_TREND_ROWS + 3,
-            trend=[
-                {"date": f"day-{i:03d}", "count": 1}
-                for i in range(asku.MAX_TREND_ROWS + 3)
-            ],
-        )
+    def test_the_per_day_trend_section_keeps_the_most_recent_days(self):
+        # db.stats_overview returns the trend oldest-first, so a head cap
+        # would drop today -- the day a question is most likely about.
+        days_with_disposals = asku.MAX_TREND_ROWS + 3
+        trend = [
+            {"date": f"2026-{1 + i // 28:02d}-{1 + i % 28:02d}", "count": i}
+            for i in range(days_with_disposals)
+        ]
+        overview = dict(EMPTY_OVERVIEW, total_items=days_with_disposals, trend=trend)
         _patch_db(self, overview=overview)
 
         lines = asku.observation_sections(asku.collect_observations(days=365))[2]["lines"]
 
         self.assertEqual(len(lines), asku.MAX_TREND_ROWS + 1)
+        newest, oldest = trend[-1], trend[0]
+        self.assertIn(f"{newest['date']}: {newest['count']} items", lines)
+        self.assertNotIn(f"{oldest['date']}: {oldest['count']} items", lines)
         self.assertEqual(
             lines[-1],
-            f"(showing the first {asku.MAX_TREND_ROWS} of {asku.MAX_TREND_ROWS + 3} rows)",
+            f"(showing {asku.MAX_TREND_ROWS} of {days_with_disposals} days: "
+            f"the most recent ones, {trend[3]['date']} to {newest['date']}; "
+            f"the 3 earlier days are not shown)",
         )
+
+
+DENY_OR_IGNORE_PHRASES = (
+    "cannot be answered",
+    "can not be answered",
+    "can't be answered",
+    "instead of answering",
+    "do not answer",
+    "don't answer",
+    "refuse to answer",
+    "ignore the observations",
+    "ignore any",
+    "disregard",
+    "recorded no events",
+    "nothing is recorded",
+    "no data is recorded",
+)
+
+COMPLETENESS_CLAIM_PHRASES = (
+    "complete set of data",
+    "the complete record",
+    "the entire record",
+    "everything tossiq has recorded",
+    "all data this system",
+    "all the data this system",
+    "every event ever",
+)
+
+
+class PromptHonestyPropertyTests(unittest.TestCase):
+    """Properties of the assembled prompt, across the datasets that produce
+    materially different blocks.
+
+    The prompt is this module's generated interface to the chat model, so
+    these are asserted against the emitted text rather than the source. Two
+    properties, both of which previously failed and produced a confidently
+    wrong answer with no error:
+
+    1. While the block carries observations, nothing in the prompt tells the
+       model to deny or ignore them.
+    2. Nothing in the prompt claims the block is the complete record, since
+       it is window-scoped and several sections are capped.
+    """
+
+    DATASETS = {
+        "populated": {},
+        "empty window, older events and a catalog": dict(
+            overview=EMPTY_OVERVIEW, items=[], locations=[], hazard_events=[]
+        ),
+        "nothing recorded at all": dict(
+            overview=EMPTY_OVERVIEW,
+            items=[],
+            locations=[],
+            hazard_events=[],
+            recent_events=[],
+            products=[],
+        ),
+    }
+
+    def _assembled_prompts(self):
+        """One (name, observations, prompt) triple per dataset above."""
+        assembled = []
+        for name, overrides in self.DATASETS.items():
+            patchers = [
+                mock.patch.object(db, attr, return_value=value)
+                for attr, value in {
+                    "stats_overview": overrides.get("overview", OVERVIEW),
+                    "stats_items": overrides.get("items", ITEMS),
+                    "stats_locations": overrides.get("locations", LOCATIONS),
+                    "list_hazard_events": overrides.get("hazard_events", HAZARD_EVENTS),
+                    "list_recent_events": overrides.get("recent_events", RECENT_EVENTS),
+                    "list_products": overrides.get("products", PRODUCTS),
+                }.items()
+            ]
+            for patcher in patchers:
+                patcher.start()
+            try:
+                observations = asku.collect_observations(days=7)
+                assembled.append(
+                    (name, observations, asku.build_prompt(observations, "How many items in total?"))
+                )
+            finally:
+                for patcher in patchers:
+                    patcher.stop()
+        return assembled
+
+    def test_no_prompt_instructs_the_model_to_deny_or_ignore_its_observations(self):
+        for name, observations, prompt in self._assembled_prompts():
+            if not (
+                observations["recent_events"]
+                or observations["products"]
+                or observations["overview"]["total_items"]
+            ):
+                continue
+            with self.subTest(dataset=name):
+                text = (prompt["system"] + "\n" + prompt["user"]).lower()
+                for phrase in DENY_OR_IGNORE_PHRASES:
+                    self.assertNotIn(phrase, text, "deny/ignore instruction present")
+
+    def test_no_prompt_claims_to_be_the_complete_record(self):
+        for name, _observations, prompt in self._assembled_prompts():
+            with self.subTest(dataset=name):
+                text = (prompt["system"] + "\n" + prompt["user"]).lower()
+                for phrase in COMPLETENESS_CLAIM_PHRASES:
+                    self.assertNotIn(phrase, text, "completeness claim present")
+
+    def test_every_section_states_the_scope_it_covers(self):
+        for name, observations, prompt in self._assembled_prompts():
+            with self.subTest(dataset=name):
+                days = observations["window_days"]
+                for section in asku.observation_sections(observations):
+                    self.assertIn(section["title"], prompt["user"])
+                    self.assertTrue(
+                        f"last {days} days" in section["title"]
+                        or "any date" in section["title"],
+                        f"section {section['title']!r} states no scope",
+                    )
 
 
 class AnswerQuestionTests(unittest.TestCase):

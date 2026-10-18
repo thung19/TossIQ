@@ -59,8 +59,9 @@ MAX_TOKENS = 700
 
 # Per-section row caps. The observation block is the entire context the
 # model gets, so it has to stay inside a sane prompt size -- but a cap must
-# never silently hide rows, so a truncated section states how many rows
-# exist (see _capped).
+# never silently hide rows, so a truncated section keeps the rows a question
+# is most likely to be about and states both the full row count and the
+# selection it kept (see _capped).
 MAX_CATALOG_MATCH_ROWS = 15
 MAX_LOCATION_ROWS = 30
 MAX_HAZARD_ROWS = 15
@@ -72,8 +73,10 @@ SYSTEM_PROMPT = """
 You are ASKU, the waste-intelligence assistant for one organization's TossIQ
 deployment. You answer questions about that organization's waste data.
 
-You may use ONLY the OBSERVATIONS block in the user message. Those observations
-are the complete set of data this system has recorded. You have no other source.
+You may use ONLY the OBSERVATIONS block in the user message. It is your only
+source of facts about this organization and you have no other. It is a selection
+from what TossIQ has logged, not the whole of it: every section states the scope
+it covers, and a section that left rows out says so.
 
 Rules:
 - Never state a count, percentage, date, location, item name, product, or cost
@@ -92,7 +95,13 @@ Rules:
   stated at the top of the block, and a section whose title says "any date" is
   not limited to that window. Answer from the sections whose stated scope fits
   the question, name that scope, and never present a figure as covering a
-  period other than the scope of the section it came from.
+  period other than the scope of the section it came from. A total from a
+  window-scoped section is that window's total and never an all-time total; if
+  the question asks about all time, say that the observations only cover the
+  scope they state.
+- Where a section says rows were left out, treat its list as partial: say so,
+  and do not state that a row you were shown is the maximum, the minimum, or
+  the only one unless the section's stated selection makes that true.
 - Be concise and concrete. A few sentences is usually enough.
 """
 
@@ -157,12 +166,13 @@ def collect_observations(days: int = DEFAULT_WINDOW_DAYS) -> dict:
     }
 
 
-def _capped(rows: list, cap: int) -> tuple[list, str | None]:
-    """Returns the first `cap` rows plus a note naming the full row count,
-    so a truncated section is visibly truncated to the model."""
+def _capped(rows: list, cap: int, selection: str) -> tuple[list, str | None]:
+    """Returns the first `cap` rows plus a note naming the full row count and
+    which rows were kept, so a truncated section is visibly truncated and the
+    basis for the truncation is stated rather than guessed at."""
     if len(rows) <= cap:
         return rows, None
-    return rows[:cap], f"(showing the first {cap} of {len(rows)} rows)"
+    return rows[:cap], f"(showing {cap} of {len(rows)} rows: {selection}; the other {len(rows) - cap} are not shown)"
 
 
 def _money(value) -> str:
@@ -190,10 +200,15 @@ def _top_item_lines(overview: dict) -> list[str]:
 def _trend_lines(overview: dict) -> list[str]:
     if not overview["trend"]:
         return ["(no days with recorded disposals in this window)"]
-    rows, note = _capped(overview["trend"], MAX_TREND_ROWS)
+    trend = overview["trend"]
+    rows = trend[-MAX_TREND_ROWS:]
     lines = [f"{row['date']}: {row['count']} items" for row in rows]
-    if note:
-        lines.append(note)
+    if len(rows) < len(trend):
+        lines.append(
+            f"(showing {len(rows)} of {len(trend)} days: the most recent ones, "
+            f"{rows[0]['date']} to {rows[-1]['date']}; the "
+            f"{len(trend) - len(rows)} earlier days are not shown)"
+        )
     return lines
 
 
@@ -210,7 +225,7 @@ def _catalog_match_lines(items: list[dict]) -> list[str]:
     if not matched:
         return ["(no logged item was matched to a catalog product in this window)"]
 
-    rows, note = _capped(matched, MAX_CATALOG_MATCH_ROWS)
+    rows, note = _capped(matched, MAX_CATALOG_MATCH_ROWS, "the highest-count matches first")
     lines = []
     for row in rows:
         value = (
@@ -231,7 +246,8 @@ def _catalog_match_lines(items: list[dict]) -> list[str]:
 def _location_lines(locations: list[dict]) -> list[str]:
     if not locations:
         return ["(no disposals recorded against any location in this window)"]
-    rows, note = _capped(locations, MAX_LOCATION_ROWS)
+    ranked = sorted(locations, key=lambda row: row["count"], reverse=True)
+    rows, note = _capped(ranked, MAX_LOCATION_ROWS, "the highest-count location/category pairs")
     lines = [f"{row['location']} / {row['category']}: {row['count']} items" for row in rows]
     if note:
         lines.append(note)
@@ -241,7 +257,7 @@ def _location_lines(locations: list[dict]) -> list[str]:
 def _hazard_lines(hazard_events: list[dict]) -> list[str]:
     if not hazard_events:
         return ["(no hazard-flagged events recorded in this window)"]
-    rows, note = _capped(hazard_events, MAX_HAZARD_ROWS)
+    rows, note = _capped(hazard_events, MAX_HAZARD_ROWS, "the most recent flagged events")
     lines = [
         f"{row['date']} at {row['location']}: '{row['detected_object']}' "
         f"flagged -- {row['hazard_reason']}"
@@ -266,7 +282,7 @@ def _recent_event_lines(recent_events: list[dict]) -> list[str]:
 def _product_lines(products: list[dict]) -> list[str]:
     if not products:
         return ["(no products are registered in the organization's catalog)"]
-    rows, note = _capped(products, MAX_PRODUCT_ROWS)
+    rows, note = _capped(products, MAX_PRODUCT_ROWS, "alphabetically first by product name")
     lines = [
         f"{row['product_name']} (sku {row['sku'] or 'none'}, "
         f"supplier {row['supplier'] or 'none'}, "
@@ -328,9 +344,10 @@ def format_observations(observations: dict) -> str:
     """Flattens the observation sections into the text block the model sees."""
     days = observations["window_days"]
     parts = [
-        f"{OBSERVATIONS_HEADER} -- everything TossIQ has recorded for this "
-        f"organization. Unless a section says otherwise, figures cover the last "
-        f"{days} days."
+        f"{OBSERVATIONS_HEADER} -- a selection of what TossIQ has logged for "
+        f"this organization, and your only source. Unless a section's title "
+        f"states a different scope, its figures count only the last {days} days; "
+        f"a section that left rows out says how many and which it kept."
     ]
     if not observations["overview"]["total_items"]:
         parts.append(NO_OBSERVATIONS_NOTICE)
