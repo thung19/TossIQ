@@ -42,10 +42,6 @@ const MAX_ZOOM = 19;
 const CAMPUS_CENTRE: [number, number] = [36.145, -86.803];
 const DEFAULT_ZOOM = 16;
 
-// Below this zoom the whole campus is a few hundred pixels wide and 43 pins
-// overlap into a blob, so only the cans that need attention are drawn.
-const DETAIL_ZOOM = 16;
-
 const STATUS_CLASS: Record<CanStatus, string> = {
   ok: "pin-ok",
   needs_service: "pin-service",
@@ -95,8 +91,6 @@ export default function CampusMap({
       mapRef.current = map;
       layerRef.current = L.layerGroup().addTo(map);
 
-      // Redraw on zoom so the low-zoom thinning takes effect.
-      map.on("zoomend", () => draw());
       draw();
     })();
 
@@ -118,11 +112,9 @@ export default function CampusMap({
     if (!L || !map || !layer) return;
 
     layer.clearLayers();
-    const zoomedOut = map.getZoom() < DETAIL_ZOOM;
 
     for (const can of cans) {
       if (can.latitude == null || can.longitude == null) continue;
-      if (zoomedOut && can.status === "ok") continue;
 
       const selected = can.can_id === selectedCanId;
       const icon = L.divIcon({

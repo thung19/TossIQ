@@ -6,24 +6,23 @@ export type FleetFilterState = {
   status: CanStatus | "";
   buildingId: string;
   modelId: string;
-  stream: string;
 };
 
 export const EMPTY_FILTERS: FleetFilterState = {
   status: "",
   buildingId: "",
   modelId: "",
-  stream: "",
 };
 
 /**
- * Status, building, hardware version, and waste-stream filters.
+ * Status, building, and hardware version filters.
  *
  * Every option set comes from the API (GET /buildings, GET /can-models,
  * GET /fleet/summary) rather than being hardcoded here, so a new building or a
  * new hardware revision appears in the filter without a frontend change. The
  * status counts come from /fleet/summary, which derives them with the same
- * fleet.py thresholds the pin colours use.
+ * fleet.py thresholds the pin colours use, narrowed by the same building and
+ * model filters, so a chip counts the cans the map is showing.
  */
 export default function FleetFilters({
   value,
@@ -39,9 +38,6 @@ export default function FleetFilters({
   summary: FleetSummary | null;
 }) {
   const set = (patch: Partial<FleetFilterState>) => onChange({ ...value, ...patch });
-  const streams = Array.from(
-    new Set(models.map((m) => m.stream_count).filter((s): s is number => s != null))
-  ).sort((a, b) => a - b);
   const active = Object.values(value).some(Boolean);
 
   const statusOptions: [CanStatus, string][] = [
@@ -97,18 +93,6 @@ export default function FleetFilters({
             {models.map((m) => (
               <option key={m.model_id} value={String(m.model_id)}>
                 {m.model_code} · fw {m.firmware_version ?? "—"}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="select">
-          <span className="group-label">streams</span>
-          <select value={value.stream} onChange={(e) => set({ stream: e.target.value })}>
-            <option value="">any</option>
-            {streams.map((s) => (
-              <option key={s} value={String(s)}>
-                {s}-stream
               </option>
             ))}
           </select>

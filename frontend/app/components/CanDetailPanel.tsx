@@ -134,7 +134,7 @@ export default function CanDetailPanel({
                   } logged since this can was last emptied, against a ${can.capacity_items}-item capacity. There are no weight sensors, so this is a count, not a measured weight.`
                 : can.fill_source === "simulated"
                   ? "Simulated value for a can that does not physically exist. Not an observation."
-                  : "No fill signal for this can."}
+                  : "No fill signal for this can: no disposal is attributed to it since it was last emptied, and there are no weight sensors, so its fullness is unknown rather than 0%."}
             </p>
           </section>
 
@@ -174,8 +174,10 @@ export default function CanDetailPanel({
             {actionError && <p className="error">{actionError}</p>}
             <p className="note">
               {can.fill_source === "observed"
-                ? "Recording an emptying moves the derived-fill window forward, so this can's counted fill resets to 0%."
-                : "This can's fill is a seeded value, not a count, so emptying it is recorded in the service history but does not move the fill number."}{" "}
+                ? "Recording an emptying moves the derived-fill window forward, so this can stops counting the items logged before it."
+                : can.fill_source === "simulated"
+                  ? "This can's fill is a seeded value, not a count, so emptying it is recorded in the service history but does not move the fill number."
+                  : "This can has no fill signal to move, so emptying it is recorded in the service history only."}{" "}
               A hardware fault clears only when the unit itself reports healthy telemetry again,
               not when a repair is logged.
             </p>
@@ -498,9 +500,9 @@ function ReadingSparkline({ can }: { can: CanDetail }) {
     return (
       <>
         <p className="sparkline-empty">
-          {can.fill_source === "observed"
-            ? "This unit reports hardware health but not fullness, so there is no measured fill history to chart. Its fill is counted from disposal events instead."
-            : "Not enough readings to chart."}
+          {can.is_simulated
+            ? "Not enough readings to chart."
+            : "This unit reports hardware health but not fullness, so there is no measured fill history to chart. Its fill is counted from disposal events instead."}
         </p>
         <style jsx>{`
           .sparkline-empty {

@@ -130,8 +130,10 @@ class DerivedFillTests(unittest.TestCase):
     def test_fill_is_events_over_item_capacity(self):
         self.assertEqual(fleet.derived_fill_percent(80, 320), 25.0)
 
-    def test_an_empty_can_reads_zero_rather_than_unknown(self):
-        self.assertEqual(fleet.derived_fill_percent(0, 320), 0.0)
+    def test_no_attributable_events_yields_no_fill_rather_than_zero(self):
+        # With no weight sensor, nothing counted means nothing is known about
+        # the can's fullness -- 0% would be a claim the system cannot make.
+        self.assertIsNone(fleet.derived_fill_percent(0, 320))
 
     def test_fill_is_capped_at_one_hundred(self):
         self.assertEqual(fleet.derived_fill_percent(900, 320), 100.0)
@@ -146,16 +148,36 @@ class ResolveFillTests(unittest.TestCase):
         fill, source = fleet.resolve_fill(can_row(is_simulated=1, fill_percent=64.0))
         self.assertEqual((fill, source), (64.0, "simulated"))
 
-    def test_simulated_can_with_no_reading_has_no_fill(self):
-        self.assertEqual(fleet.resolve_fill(can_row(is_simulated=1, fill_percent=None)), (None, None))
+    def test_simulated_can_with_no_reading_reports_no_fill_signal(self):
+        self.assertEqual(
+            fleet.resolve_fill(can_row(is_simulated=1, fill_percent=None)), (None, "unknown")
+        )
 
     def test_real_can_counts_items_and_ignores_any_seeded_value(self):
         row = can_row(is_simulated=0, fill_percent=99.0, events_since_emptied=160, capacity_items=320)
         self.assertEqual(fleet.resolve_fill(row), (50.0, "observed"))
 
-    def test_real_can_with_unknown_capacity_has_no_fill(self):
+    def test_real_can_with_unknown_capacity_reports_no_fill_signal(self):
         row = can_row(is_simulated=0, events_since_emptied=160, capacity_items=None)
-        self.assertEqual(fleet.resolve_fill(row), (None, None))
+        self.assertEqual(fleet.resolve_fill(row), (None, "unknown"))
+
+    def test_real_can_with_nothing_attributed_is_not_zero_percent_observed(self):
+        row = can_row(is_simulated=0, fill_percent=None, events_since_emptied=0, capacity_items=320)
+        self.assertEqual(fleet.resolve_fill(row), (None, "unknown"))
+
+    def test_observed_fill_rises_again_after_an_emptying(self):
+        """An emptying resets the counting window, and disposals attributed to
+        the can afterwards raise its observed fill again rather than leaving it
+        pinned at a fill it never observed."""
+        emptied = can_row(
+            is_simulated=0, fill_percent=None, events_since_emptied=0, capacity_items=320
+        )
+        self.assertEqual(fleet.resolve_fill(emptied), (None, "unknown"))
+        self.assertEqual(fleet.resolve_can(emptied, now=NOW)["status"], "ok")
+
+        refilled = {**emptied, "events_since_emptied": 300}
+        self.assertEqual(fleet.resolve_fill(refilled), (93.8, "observed"))
+        self.assertEqual(fleet.resolve_can(refilled, now=NOW)["status"], "needs_service")
 
 
 class ResolveCanTests(unittest.TestCase):

@@ -110,7 +110,10 @@ export type AskuAnswer = {
 
 export type CanStatus = "ok" | "needs_service" | "fault" | "offline";
 
-export type FillSource = "observed" | "simulated" | null;
+// "unknown" is the honest answer for a can with no fill signal: there are no
+// weight sensors, so a can with nothing attributed to it reports no fill
+// rather than 0% observed.
+export type FillSource = "observed" | "simulated" | "unknown" | null;
 
 export type Can = {
   can_id: number;

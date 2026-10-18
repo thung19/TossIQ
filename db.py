@@ -181,6 +181,31 @@ def match_product_by_image(embedding: list[float], max_distance: float = 0.3) ->
 # Disposal events (WASTE_EVENTS)
 # ---------------------------------------------------------------------------
 
+def _resolve_bin_id(cursor, location) -> int | None:
+    """The physical can an event belongs to, from the free-text LOCATION the
+    device reported.
+
+    A capture's LOCATION is matched against CANS.CAN_CODE, which is how the
+    seeded fleet's own events are attributed. A live camera rig reports a rig
+    name rather than a can code, so LIVE_CAMERA_CAN_CODE names the can it
+    feeds; it is only consulted when LOCATION itself resolves to nothing.
+    Returns None when neither resolves, which leaves BIN_ID NULL rather than
+    attributing items to a can that did not receive them.
+    """
+    candidates = [location, os.environ.get("LIVE_CAMERA_CAN_CODE")]
+    for candidate in candidates:
+        if not candidate or not str(candidate).strip():
+            continue
+        cursor.execute(
+            "SELECT can_id FROM cans WHERE can_code = :can_code",
+            can_code=str(candidate).strip(),
+        )
+        row = cursor.fetchone()
+        if row is not None:
+            return row[0]
+    return None
+
+
 def insert_waste_event(
     detected_object=None,
     material=None,
@@ -197,7 +222,9 @@ def insert_waste_event(
     bin_id=None,
 ) -> int:
     """bin_id, when given, is the physical can the item was deposited in
-    (CANS.can_id); it stays NULL for a capture that cannot be attributed to a
+    (CANS.can_id). When it is not given it is resolved from `location` (see
+    _resolve_bin_id), so a caller does not have to know which can it is
+    feeding; it stays NULL for a capture that cannot be attributed to a
     registered unit, which is why the column is nullable.
 
     created_at, when given, is the actual capture/disposal time (e.g. from an
@@ -206,6 +233,8 @@ def insert_waste_event(
     the caller has no capture-time timestamp to report."""
     created_at_sql = ":created_at" if created_at is not None else "SYSTIMESTAMP"
     with get_connection() as conn, conn.cursor() as cursor:
+        if bin_id is None:
+            bin_id = _resolve_bin_id(cursor, location)
         event_id_var = cursor.var(int)
         cursor.execute(
             f"""
@@ -516,7 +545,6 @@ def list_can_rows(
     can_id: int | None = None,
     building_id: int | None = None,
     model_id: int | None = None,
-    stream: int | None = None,
 ) -> list[dict]:
     """Raw can rows for fleet.py to resolve. Status is deliberately not a filter
     here: it does not exist as a column, so fleet.py filters on it after
@@ -532,9 +560,6 @@ def list_can_rows(
     if model_id is not None:
         clauses.append("AND c.model_id = :model_id")
         binds["model_id"] = model_id
-    if stream is not None:
-        clauses.append("AND m.stream_count = :stream")
-        binds["stream"] = stream
 
     sql = _CAN_ROW_SQL + "\n".join(clauses) + "\nORDER BY b.name, c.can_code"
     with get_connection() as conn, conn.cursor() as cursor:
@@ -611,50 +636,6 @@ def insert_service_event(can_id: int, service_type: str, performed_by=None, note
         )
         conn.commit()
         return service_id_var.getvalue()[0]
-
-
-def insert_can_reading(
-    can_id: int,
-    fill_percent=None,
-    fill_source=None,
-    camera_ok=1,
-    actuator_ok=1,
-    connectivity_ok=1,
-    battery_percent=None,
-    fault_code=None,
-    fault_detail=None,
-    reported_at=None,
-) -> int:
-    """Appends one telemetry reading. reported_at, when given, is the device's
-    own report time (the seed backdates a 7-day tail with it); otherwise the
-    row is stamped at persist time."""
-    reported_at_sql = ":reported_at" if reported_at is not None else "SYSTIMESTAMP"
-    with get_connection() as conn, conn.cursor() as cursor:
-        reading_id_var = cursor.var(int)
-        cursor.execute(
-            f"""
-            INSERT INTO can_readings
-                (can_id, reported_at, fill_percent, fill_source, camera_ok, actuator_ok,
-                 connectivity_ok, battery_percent, fault_code, fault_detail)
-            VALUES
-                (:can_id, {reported_at_sql}, :fill_percent, :fill_source, :camera_ok, :actuator_ok,
-                 :connectivity_ok, :battery_percent, :fault_code, :fault_detail)
-            RETURNING reading_id INTO :reading_id
-            """,
-            can_id=can_id,
-            fill_percent=fill_percent,
-            fill_source=fill_source,
-            camera_ok=camera_ok,
-            actuator_ok=actuator_ok,
-            connectivity_ok=connectivity_ok,
-            battery_percent=battery_percent,
-            fault_code=fault_code,
-            fault_detail=fault_detail,
-            reading_id=reading_id_var,
-            **({"reported_at": reported_at} if reported_at is not None else {}),
-        )
-        conn.commit()
-        return reading_id_var.getvalue()[0]
 
 
 def can_contents(can_id: int, days: int = 30, event_limit: int = 50) -> dict:

@@ -10,7 +10,9 @@ import type { FillSource } from "../../lib/api";
  * is counted from the disposal events attributed to the can since it was last
  * emptied -- real data, drawn solid. A "simulated" value belongs to a can that
  * does not physically exist and is drawn hatched, so a glance at the map never
- * mistakes the mock fleet for reporting hardware.
+ * mistakes the mock fleet for reporting hardware. Any other source means the
+ * can has no fill signal, which is drawn as an empty track labelled as such
+ * rather than as a 0% reading.
  */
 export default function FillBar({
   percent,
@@ -23,7 +25,7 @@ export default function FillBar({
   threshold?: number;
   showLabel?: boolean;
 }) {
-  const known = percent != null;
+  const known = percent != null && (source === "observed" || source === "simulated");
   const clamped = known ? Math.max(0, Math.min(100, percent)) : 0;
   const over = known && threshold != null && clamped >= threshold;
 
@@ -39,7 +41,9 @@ export default function FillBar({
       {showLabel && (
         <div className="meta">
           <span className="pct">{known ? `${clamped.toFixed(0)}%` : "—"}</span>
-          <span className="src">{source ?? "no fill signal"}</span>
+          <span className="src">
+            {source === "observed" || source === "simulated" ? source : "no fill signal"}
+          </span>
         </div>
       )}
 

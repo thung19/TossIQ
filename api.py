@@ -93,20 +93,10 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="TossIQ Classification API", lifespan=lifespan)
 
 # The Linear-styled frontend (frontend/) runs on a separate dev server
-# (next dev on :3000) and calls these endpoints cross-origin. `next dev` walks
-# forward to :3001/:3002 when 3000 is already taken -- the same port-collision
-# problem run_api.py handles for the API side -- so those are allowed too,
-# otherwise the dashboard silently loads with no data on a busy machine.
+# (next dev on :3000) and calls these endpoints cross-origin.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:3001",
-        "http://127.0.0.1:3001",
-        "http://localhost:3002",
-        "http://127.0.0.1:3002",
-    ],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
     allow_methods=["*"],
     allow_headers=["*"],
     allow_credentials=False,
@@ -469,11 +459,10 @@ def get_cans(
     status: str | None = None,
     building_id: int | None = None,
     model_id: int | None = None,
-    stream: int | None = None,
 ):
     """The map's single payload: every active can with its resolved status,
     fill, model, building, and position."""
-    return fleet.list_fleet(status=status, building_id=building_id, model_id=model_id, stream=stream)
+    return fleet.list_fleet(status=status, building_id=building_id, model_id=model_id)
 
 
 @app.get("/cans/{can_id}")
@@ -532,10 +521,11 @@ def get_buildings():
 
 
 @app.get("/fleet/summary")
-def get_fleet_summary():
+def get_fleet_summary(building_id: int | None = None, model_id: int | None = None):
     """Counts by status for the map's KPI row, plus the thresholds those counts
-    were derived against."""
-    return fleet.fleet_summary()
+    were derived against. Takes the same building_id / model_id narrowing
+    GET /cans takes, so the counts describe the same set of cans."""
+    return fleet.fleet_summary(building_id=building_id, model_id=model_id)
 
 
 # ---------------------------------------------------------------------------

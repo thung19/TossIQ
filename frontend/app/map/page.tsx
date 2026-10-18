@@ -42,15 +42,25 @@ export default function CampusMapPage() {
   // the next poll tick.
   const [refreshToken, setRefreshToken] = useState(0);
 
-  const query = useMemo(() => {
+  // Two queries over the same filters: the fleet list honours all of them,
+  // while the counts honour everything except status -- a status chip's count
+  // is the breakdown within the filtered scope, so narrowing by status must
+  // not collapse the other chips to zero.
+  const scopeQuery = useMemo(() => {
     const params = new URLSearchParams();
-    if (filters.status) params.set("status", filters.status);
     if (filters.buildingId) params.set("building_id", filters.buildingId);
     if (filters.modelId) params.set("model_id", filters.modelId);
-    if (filters.stream) params.set("stream", filters.stream);
     const encoded = params.toString();
     return encoded ? `?${encoded}` : "";
   }, [filters]);
+
+  const query = useMemo(
+    () =>
+      filters.status
+        ? `${scopeQuery}${scopeQuery ? "&" : "?"}status=${encodeURIComponent(filters.status)}`
+        : scopeQuery,
+    [filters.status, scopeQuery]
+  );
 
   useEffect(() => {
     let alive = true;
@@ -58,7 +68,7 @@ export default function CampusMapPage() {
       try {
         const [fleet, fleetSummary] = await Promise.all([
           apiFetch<Can[]>(`/cans${query}`),
-          apiFetch<FleetSummary>("/fleet/summary"),
+          apiFetch<FleetSummary>(`/fleet/summary${scopeQuery}`),
         ]);
         if (!alive) return;
         setCans(fleet);
@@ -73,7 +83,7 @@ export default function CampusMapPage() {
       alive = false;
       clearInterval(id);
     };
-  }, [query, refreshToken]);
+  }, [query, scopeQuery, refreshToken]);
 
   // Filter options change far more slowly than fleet status, so they are
   // fetched once rather than polled.

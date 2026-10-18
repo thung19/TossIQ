@@ -11,10 +11,11 @@ Two things are derived rather than measured:
 * Fill. There are no weight sensors (CLAUDE.md records that as a hard hardware
   constraint), so a can's fullness is either counted from the disposal events
   attributed to it since it was last emptied ('observed'), or carried from a
-  seeded reading for a can that does not physically exist ('simulated'). Every
-  fill value travels with its FILL_SOURCE so the UI can keep the two apart,
-  per CLAUDE.md's requirement that observed data stay distinguishable from
-  estimates.
+  seeded reading for a can that does not physically exist ('simulated'), or
+  absent, for a can with neither ('unknown') -- which is reported rather than
+  a zero the system never observed. Every fill value travels with its
+  FILL_SOURCE so the UI can keep the three apart, per CLAUDE.md's requirement
+  that observed data stay distinguishable from estimates.
 * Status. A can reports its single worst status, which colours one map pin,
   plus the full list of reasons, which the detail panel explains.
 """
@@ -44,32 +45,38 @@ def derived_fill_percent(events_since_emptied: int, capacity_items: int | None) 
     emptied, over the model's item capacity, capped at 100.
 
     Returns None when the model declares no item capacity, since a percentage
-    of an unknown denominator would be a fabricated number.
+    of an unknown denominator would be a fabricated number, and when no
+    disposal is attributed to the can at all: with no weight sensor, nothing to
+    count means nothing is known about its fullness, not that it is empty.
     """
-    if not capacity_items:
+    if not capacity_items or events_since_emptied <= 0:
         return None
     percent = 100.0 * events_since_emptied / capacity_items
     return round(min(percent, 100.0), 1)
 
 
-def resolve_fill(can_row: dict) -> tuple[float | None, str | None]:
+def resolve_fill(can_row: dict) -> tuple[float | None, str]:
     """Picks the fill value to present for one can, and says where it came from.
 
     Simulated cans carry the fill_percent of their latest seeded reading.
     Real reporting cans ignore any seeded value and use the item count, which
     is the only fill signal this hardware can actually observe.
+
+    A can with no fill signal at all reports (None, "unknown") rather than a
+    zero: 0% observed is a claim about the can, and claiming it for a can
+    nothing is attributed to would be a confidently wrong number.
     """
     if can_row.get("is_simulated"):
         reading_fill = can_row.get("fill_percent")
         if reading_fill is None:
-            return None, None
+            return None, "unknown"
         return round(float(reading_fill), 1), "simulated"
 
     derived = derived_fill_percent(
         can_row.get("events_since_emptied") or 0, can_row.get("capacity_items")
     )
     if derived is None:
-        return None, None
+        return None, "unknown"
     return derived, "observed"
 
 
@@ -167,14 +174,13 @@ def list_fleet(
     status: str | None = None,
     building_id: int | None = None,
     model_id: int | None = None,
-    stream: int | None = None,
 ) -> list[dict]:
     """The map's single payload: every active can with its resolved status.
 
-    building_id / model_id / stream narrow the SQL; `status` is applied here
-    because status is derived rather than stored.
+    building_id / model_id narrow the SQL; `status` is applied here because
+    status is derived rather than stored.
     """
-    rows = db.list_can_rows(building_id=building_id, model_id=model_id, stream=stream)
+    rows = db.list_can_rows(building_id=building_id, model_id=model_id)
     now = datetime.now()
     cans = [resolve_can(row, now=now) for row in rows]
     if status:
@@ -194,9 +200,14 @@ def get_can_detail(can_id: int, reading_limit: int = 200, service_limit: int = 2
     return can
 
 
-def fleet_summary() -> dict:
-    """Counts by status for the map's KPI row."""
-    cans = list_fleet()
+def fleet_summary(building_id: int | None = None, model_id: int | None = None) -> dict:
+    """Counts by status for the map's KPI row and the filter chips.
+
+    Takes the same building_id / model_id narrowing the fleet list takes, so
+    the counts shown beside a filtered map describe the cans on that map
+    rather than the whole campus.
+    """
+    cans = list_fleet(building_id=building_id, model_id=model_id)
     counts = {name: 0 for name in STATUS_SEVERITY}
     for can in cans:
         counts[can["status"]] += 1
