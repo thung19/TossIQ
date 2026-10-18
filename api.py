@@ -12,8 +12,9 @@ Two sorting entry points, matching the PRD's two-layer architecture:
 Everything else (catalog, dashboard stats, recommendations) is plain CRUD/
 aggregation over the OCI-backed tables in db.py (Layer 3).
 
-GET / serves the dashboard (static/index.html) -- a live view over the
-same stats/recommendations/products endpoints below.
+GET / serves the dashboard -- the built React app in frontend/dist, a live
+view over the same stats/recommendations/products endpoints below. Build it
+with `npm install && npm run build` in frontend/ before starting the API.
 
 The models are loaded once at startup (see `lifespan`) and reused across
 requests via `app.state`.
@@ -29,6 +30,8 @@ Run locally:
 import io
 import logging
 import uuid
+
+from pathlib import Path
 
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -437,4 +440,14 @@ def generate_recommendations(days: int = 30):
 # Dashboard UI -- mounted last so it never shadows the API routes above
 # ---------------------------------------------------------------------------
 
-app.mount("/", StaticFiles(directory="static", html=True), name="dashboard")
+FRONTEND_DIST = Path(__file__).resolve().parent / "frontend" / "dist"
+
+# StaticFiles raises an opaque "directory does not exist" at startup, which is
+# the state of a fresh clone before the frontend has been built. Say what to run.
+if not FRONTEND_DIST.is_dir():
+    raise RuntimeError(
+        f"Dashboard build not found at {FRONTEND_DIST}. "
+        "Build the React frontend first: cd frontend && npm install && npm run build"
+    )
+
+app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="dashboard")
