@@ -1,5 +1,7 @@
 import { useState } from 'react';
 
+import { postJSON } from '../api';
+
 export default function InsightsPanel({ days, recommendations, onGenerated }) {
   const [status, setStatus] = useState({ text: '', kind: '' });
   const [running, setRunning] = useState(false);
@@ -8,8 +10,7 @@ export default function InsightsPanel({ days, recommendations, onGenerated }) {
     setRunning(true);
     setStatus({ text: 'Generating...', kind: '' });
     try {
-      const res = await fetch(`/recommendations/generate?days=${days}`, { method: 'POST' });
-      const data = await res.json();
+      const data = await postJSON(`/recommendations/generate?days=${days}`);
       setStatus({
         text: data.new_recommendations.length
           ? `${data.new_recommendations.length} new recommendation(s).`

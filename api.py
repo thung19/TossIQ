@@ -442,12 +442,11 @@ def generate_recommendations(days: int = 30):
 
 FRONTEND_DIST = Path(__file__).resolve().parent / "frontend" / "dist"
 
-# StaticFiles raises an opaque "directory does not exist" at startup, which is
-# the state of a fresh clone before the frontend has been built. Say what to run.
-if not FRONTEND_DIST.is_dir():
-    raise RuntimeError(
-        f"Dashboard build not found at {FRONTEND_DIST}. "
-        "Build the React frontend first: cd frontend && npm install && npm run build"
+if FRONTEND_DIST.is_dir():
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="dashboard")
+else:
+    logger.warning(
+        "Dashboard build not found at %s; API routes only. "
+        "Build it with: cd frontend && npm install && npm run build",
+        FRONTEND_DIST,
     )
-
-app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="dashboard")
