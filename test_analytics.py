@@ -24,6 +24,8 @@ def raw(**overrides) -> dict:
         "class_cost": 2.00,
         "class_grams": 80.0,
         "no_cost_n": 1,
+        "hazard_n": 2,
+        "hazard_critical_n": 1,
         "avg_confidence": 81.25,
     }
     row.update(overrides)
@@ -62,7 +64,7 @@ class DistributionTests(unittest.TestCase):
         total = {"n": total_n if total_n is not None else sum(r["n"] for r in rows),
                  "matched_n": 0, "matched_cost": 0.0, "matched_grams": 0.0,
                  "class_cost": 0.0, "class_grams": 0.0, "no_cost_n": 0,
-                 "avg_confidence": 0.0}
+                 "hazard_n": 0, "hazard_critical_n": 0, "avg_confidence": 0.0}
         with mock.patch.object(analytics.db, "analytics_distribution", return_value=rows), \
              mock.patch.object(analytics.db, "analytics_totals", return_value=total):
             return analytics.distribution("material", days=30)
@@ -117,6 +119,7 @@ class OverviewTests(unittest.TestCase):
         result = self.overview([], totals={"n": 0, "matched_n": 0, "matched_cost": 0.0,
                                            "matched_grams": 0.0, "class_cost": 0.0,
                                            "class_grams": 0.0, "no_cost_n": 0,
+                                           "hazard_n": 0, "hazard_critical_n": 0,
                                            "avg_confidence": 0.0})
         self.assertEqual(result["diversion_rate"], 0.0)
         self.assertEqual(result["catalog_match_rate"], 0.0)
@@ -141,7 +144,8 @@ class AccuracyTests(unittest.TestCase):
     def accuracy(self, reviews, total_events=100):
         totals = {"n": total_events, "matched_n": 0, "matched_cost": 0.0,
                   "matched_grams": 0.0, "class_cost": 0.0, "class_grams": 0.0,
-                  "no_cost_n": 0, "avg_confidence": 0.0}
+                  "no_cost_n": 0, "hazard_n": 0, "hazard_critical_n": 0,
+                  "avg_confidence": 0.0}
         with mock.patch.object(analytics.db, "analytics_review_rows", return_value=reviews), \
              mock.patch.object(analytics.db, "analytics_totals", return_value=totals):
             return analytics.accuracy(days=30)
@@ -205,7 +209,8 @@ class MisroutedTests(unittest.TestCase):
         rows = [{"item": "x", "logged_as": "landfill", "should_be": "compost",
                  "count": 20, "grams": 500.0}]
         totals = {"n": 200, "matched_n": 0, "matched_cost": 0.0, "matched_grams": 0.0,
-                  "class_cost": 0.0, "class_grams": 0.0, "no_cost_n": 0, "avg_confidence": 0.0}
+                  "class_cost": 0.0, "class_grams": 0.0, "no_cost_n": 0,
+                  "hazard_n": 0, "hazard_critical_n": 0, "avg_confidence": 0.0}
         with mock.patch.object(analytics.db, "analytics_misrouted", return_value=rows), \
              mock.patch.object(analytics.db, "analytics_totals", return_value=totals):
             result = analytics.misrouted(days=30)
@@ -318,6 +323,47 @@ class FilterBindingTests(unittest.TestCase):
                 shared <= parameters,
                 f"{function.__name__} is missing {sorted(shared - parameters)}",
             )
+
+
+class HazardInAnalyticsTests(unittest.TestCase):
+    """Hazards travel with every breakdown rather than living only on their
+    own page. "Which building throws away the most" and "which throws away
+    the most dangerous things" are different questions and should not need
+    different tabs."""
+
+    def test_hazard_counts_ride_along_on_every_measure_block(self):
+        measures = analytics._measures(raw(hazard_n=5, hazard_critical_n=2))
+        self.assertEqual(measures["hazard_items"], 5)
+        self.assertEqual(measures["hazard_critical_items"], 2)
+
+    def test_an_older_row_without_the_columns_reports_zero_not_an_error(self):
+        """analytics._measures is fed by several queries; one that predates
+        the hazard columns must degrade rather than raise."""
+        row = raw()
+        del row["hazard_n"]
+        del row["hazard_critical_n"]
+        self.assertEqual(analytics._measures(row)["hazard_items"], 0)
+
+    def test_overview_reports_a_hazard_rate_against_everything_logged(self):
+        totals = {"n": 1000, "matched_n": 0, "matched_cost": 0.0, "matched_grams": 0.0,
+                  "class_cost": 0.0, "class_grams": 0.0, "no_cost_n": 0,
+                  "hazard_n": 30, "hazard_critical_n": 12, "avg_confidence": 0.0}
+        with mock.patch.object(analytics.db, "analytics_totals", return_value=totals), \
+             mock.patch.object(analytics.db, "analytics_distribution", return_value=[]):
+            result = analytics.overview(days=30)
+        self.assertEqual(result["hazard_rate"], 3.0)
+        self.assertIn("critical", result["estimate_notes"]["hazards"])
+
+    def test_the_hazard_dimension_keeps_non_hazards_visible(self):
+        """Bucketing them out entirely would make the hazard slice look
+        like the only thing on campus."""
+        expression = db.ANALYTICS_DIMENSIONS["hazard_class"]
+        self.assertIn("not hazardous", expression)
+        self.assertIn("hazard_flag = 1", expression)
+
+    def test_both_hazard_dimensions_are_whitelisted(self):
+        for name in ("hazard_class", "hazard_severity"):
+            self.assertIn(name, db.ANALYTICS_DIMENSIONS)
 
 
 if __name__ == "__main__":

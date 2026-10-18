@@ -317,6 +317,11 @@ export type Measures = {
   cost_from_matched: number;
   cost_from_class_average: number;
   no_cost_items: number;
+  /** Flagged hazardous items inside this bucket. Carried on every
+   * breakdown so "which building throws away the most dangerous things" is
+   * answerable from the same query as "which throws away the most". */
+  hazard_items: number;
+  hazard_critical_items: number;
   avg_confidence: number | null;
 };
 
@@ -328,7 +333,8 @@ export type AnalyticsOverview = Measures & {
   diverted_items: number;
   diversion_rate: number;
   catalog_match_rate: number;
-  estimate_notes: { mass: string; cost: string; unmatched: string };
+  hazard_rate: number;
+  estimate_notes: { mass: string; cost: string; unmatched: string; hazards: string };
 };
 
 export type AnalyticsDistribution = {
@@ -606,4 +612,110 @@ export const KIND_LABEL: Record<RecommendationKind, string> = {
   placement: "bin placement",
   sustainability: "diversion",
   safety: "safety",
+};
+
+
+// --- Hazards ------------------------------------------------------------
+// The vision model raises the flag; hazards.py says what kind and how
+// urgent. Severity is about RESPONSE TIME, not how unpleasant something is:
+// critical means it can start a fire in a compacted load or injure whoever
+// reaches in.
+
+export type HazardSeverity = "critical" | "high" | "medium" | "unclassified";
+
+export type HazardEvent = {
+  event_id: number;
+  detected_object: string | null;
+  material: string | null;
+  category: string | null;
+  hazard_reason: string | null;
+  hazard_class: string | null;
+  hazard_severity: HazardSeverity | null;
+  hazard_note: string | null;
+  confidence: number | null;
+  created_at: string | null;
+  image_url: string | null;
+  acknowledged_at: string | null;
+  acknowledged_by: string | null;
+  location: string | null;
+  can_id: number | null;
+  can_code: string | null;
+  floor: string | null;
+  placement_note: string | null;
+  building_id: number | null;
+  building_name: string | null;
+  campus_area: string | null;
+  /** Procedure for the class, served with the event rather than stored per
+   * row -- a corrected instruction has to reach every item, not only the
+   * ones logged after the correction. */
+  display_name: string;
+  handling: string;
+  response_hours: number;
+};
+
+export type HazardOverdue = {
+  event_id: number;
+  detected_object: string | null;
+  hazard_class: string | null;
+  display_name: string;
+  severity: HazardSeverity;
+  building_name: string | null;
+  can_code: string | null;
+  created_at: string | null;
+  hours_open: number;
+  response_hours: number;
+  hours_overdue: number;
+};
+
+export type HazardRecurrence = {
+  building_name: string;
+  building_id: number | null;
+  hazard_class: string;
+  severity: HazardSeverity;
+  count: number;
+  cans: number;
+  last_seen: string | null;
+  display_name: string;
+  handling: string;
+};
+
+export type HazardSummary = {
+  window_days: number;
+  total: number;
+  outstanding: number;
+  by_severity: { severity: HazardSeverity; count: number; outstanding: number }[];
+  by_class: {
+    hazard_class: string;
+    severity: HazardSeverity;
+    count: number;
+    outstanding: number;
+    display_name: string;
+    handling: string;
+  }[];
+  by_location: {
+    building_name: string;
+    building_id: number | null;
+    hazard_class: string;
+    severity: HazardSeverity;
+    count: number;
+    cans: number;
+    last_seen: string | null;
+  }[];
+  /** Specific items nobody has acknowledged inside their severity's
+   * response window. Somebody needs to go and deal with these. */
+  overdue: HazardOverdue[];
+  /** The same class recurring in one building. Dealing with each one
+   * individually will not stop the next. */
+  recurring: HazardRecurrence[];
+  trend: { date: string; severity: HazardSeverity; count: number }[];
+  response_hours: Record<string, number>;
+  recurrence_threshold: number;
+  note: string;
+};
+
+export const SEVERITY_RANK: Record<HazardSeverity, number> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  unclassified: 3,
 };

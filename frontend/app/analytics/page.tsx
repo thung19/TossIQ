@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import PageHeader from "../components/PageHeader";
 import StatCard from "../components/StatCard";
 import AnalyticsFilterBar from "../components/AnalyticsFilterBar";
@@ -267,6 +268,17 @@ export default function AnalyticsPage() {
           <StatCard label="diverted" value={overview?.diversion_rate ?? "—"} suffix="%" />
           <StatCard label="catalog match" value={overview?.catalog_match_rate ?? "—"} suffix="%" />
           <StatCard
+            label="hazardous"
+            value={overview?.hazard_items ?? "—"}
+            delta={
+              overview
+                ? overview.hazard_critical_items > 0
+                  ? `${overview.hazard_critical_items} critical`
+                  : "none critical"
+                : undefined
+            }
+          />
+          <StatCard
             label="review agreement"
             value={accuracy?.accuracy ?? "—"}
             suffix={accuracy?.accuracy != null ? "%" : undefined}
@@ -332,6 +344,13 @@ export default function AnalyticsPage() {
                   </li>
                   <li>
                     <b>Estimated cost.</b> {overview.estimate_notes.cost}
+                  </li>
+                  <li>
+                    <b>Hazards.</b> {overview.estimate_notes.hazards}{" "}
+                    <Link href="/hazards" className="link">
+                      Open the hazards page
+                    </Link>{" "}
+                    to see where they were found and what handling each needs.
                   </li>
                   <li>
                     <b>Coverage.</b> {overview.estimate_notes.unmatched} Of the cost shown,{" "}
@@ -422,7 +441,7 @@ export default function AnalyticsPage() {
         }
         .kpis {
           display: grid;
-          grid-template-columns: repeat(6, minmax(0, 1fr));
+          grid-template-columns: repeat(7, minmax(0, 1fr));
           gap: 6px;
         }
         .tabs {
@@ -518,6 +537,10 @@ export default function AnalyticsPage() {
         .notes b {
           color: var(--text-secondary);
           font-weight: 510;
+        }
+        .notes :global(.link) {
+          color: var(--link);
+          text-decoration: underline;
         }
         @media (max-width: 1240px) {
           .grid-two {

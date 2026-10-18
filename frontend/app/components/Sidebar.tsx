@@ -51,6 +51,18 @@ const Icon = {
       <rect x="3" y="3" width="10" height="10" rx="1" stroke="currentColor" strokeWidth="1.1" />
     </svg>
   ),
+  hazard: (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path
+        d="M8 2.2l5.6 10.2a.8.8 0 01-.7 1.2H3.1a.8.8 0 01-.7-1.2L8 2.2z"
+        stroke="currentColor"
+        strokeWidth="1.1"
+        strokeLinejoin="round"
+      />
+      <path d="M8 6.4v3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      <circle cx="8" cy="11.4" r="0.7" fill="currentColor" />
+    </svg>
+  ),
   bulb: (
     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
       <path
@@ -87,7 +99,7 @@ const PRIMARY: NavItem[] = [
   { href: "/analytics", label: "Analytics", icon: Icon.chart },
   { href: "/dataset", label: "Dataset", icon: Icon.dataset },
   { href: "/recommendations", label: "Recommendations", icon: Icon.bulb },
-  { href: "/operations", label: "Operator insights", icon: Icon.user },
+  { href: "/hazards", label: "Hazards", icon: Icon.hazard },
   { href: "/asku", label: "ASKU assistant", icon: Icon.ask },
 ];
 

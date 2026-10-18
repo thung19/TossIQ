@@ -61,6 +61,12 @@ def _measures(row: dict) -> dict:
         "cost_from_matched": round(row["matched_cost"], 2),
         "cost_from_class_average": round(row["class_cost"], 2),
         "no_cost_items": row["no_cost_n"],
+        # Hazards travel with every breakdown rather than living only on
+        # their own page: "which building throws away the most" and "which
+        # building throws away the most dangerous things" are different
+        # questions, and the second one should not need a different tab.
+        "hazard_items": row.get("hazard_n", 0),
+        "hazard_critical_items": row.get("hazard_critical_n", 0),
         "avg_confidence": round(row["avg_confidence"], 1) if row["avg_confidence"] else None,
     }
 
@@ -112,6 +118,7 @@ def overview(**filters) -> dict:
         "diverted_items": diverted,
         "diversion_rate": round(100.0 * diverted / total, 1) if total else 0.0,
         "catalog_match_rate": matched_share,
+        "hazard_rate": round(100.0 * totals.get("hazard_n", 0) / total, 2) if total else 0.0,
         # Everything above that is an estimate rather than a count, named so
         # the UI can caption it without hardcoding the caveat in three places.
         "estimate_notes": {
@@ -123,6 +130,12 @@ def overview(**filters) -> dict:
                     "their value.",
             "unmatched": f"{totals['no_cost_n']} item(s) have no catalog entry and "
                          f"contribute to neither total.",
+            "hazards": (
+                f"{totals.get('hazard_n', 0)} item(s) in this scope were flagged as "
+                f"hazardous, {totals.get('hazard_critical_n', 0)} of them critical. "
+                "Hazards carry no catalog cost and no stream: the sorter has nowhere "
+                "correct to put them, which is the point."
+            ),
         },
     }
 

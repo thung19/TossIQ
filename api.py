@@ -53,6 +53,7 @@ import analytics
 import asku
 import db
 import fleet
+import hazards
 import image_embed
 import insights
 import oci_storage
@@ -226,6 +227,15 @@ def _persist_advanced_result(
         matched_product = db.match_product(identification.get("object"))
     image_key = _upload_event_image(image)
     hazard_flag = identification.get("hazard_flag")
+    # Classify at write time rather than on every page load: the hazards
+    # page groups and filters on these in SQL, and an item flagged at 2am
+    # should be actionable the moment somebody opens the page rather than
+    # waiting for a backfill to run.
+    hazard_verdict = (
+        hazards.classify(identification.get("object"), identification.get("hazard_reason"))
+        if hazard_flag is True
+        else None
+    )
     event_id = db.insert_waste_event(
         detected_object=identification.get("object"),
         material=identification.get("material"),
@@ -237,6 +247,8 @@ def _persist_advanced_result(
         created_at=captured_at,
         hazard_flag=1 if hazard_flag is True else (0 if hazard_flag is False else None),
         hazard_reason=identification.get("hazard_reason"),
+        hazard_class=hazard_verdict["hazard_class"] if hazard_verdict else None,
+        hazard_severity=hazard_verdict["severity"] if hazard_verdict else None,
         visible_text=identification.get("visible_text"),
         reusable_condition=identification.get("reusable_condition"),
     )
@@ -546,6 +558,80 @@ def get_fleet_summary(building_id: int | None = None, model_id: int | None = Non
     GET /cans takes, so the counts describe the same set of cans."""
     return fleet.fleet_summary(building_id=building_id, model_id=model_id)
 
+
+
+
+# ---------------------------------------------------------------------------
+# Hazardous disposals (Experience 2 -- safety)
+# ---------------------------------------------------------------------------
+# The vision model raises HAZARD_FLAG; hazards.py says what kind and how
+# urgent, and stores it on the event. These routes serve the worklist and
+# the pattern behind it: the same hazard in the same building repeatedly is
+# a missing collection point, not a run of careless individuals.
+
+class HazardAcknowledgement(BaseModel):
+    acknowledged_by: Annotated[str, StringConstraints(min_length=1, max_length=120)]
+    note: Annotated[str, StringConstraints(max_length=600)] | None = None
+
+
+@app.get("/hazards")
+def get_hazards(
+    days: int = 30,
+    severity: str | None = None,
+    hazard_class: str | None = None,
+    building_id: int | None = None,
+    outstanding_only: bool = False,
+    limit: int = 200,
+):
+    """Flagged disposals with their class, severity and required handling.
+
+    Handling text is attached here rather than stored per row: it is
+    procedure, the same for every item of a class, and duplicating it onto
+    thousands of events would mean a corrected instruction only reaching the
+    ones logged after the correction.
+    """
+    rows = db.list_hazard_disposals(
+        days=days,
+        severity=severity,
+        hazard_class=hazard_class,
+        building_id=building_id,
+        outstanding_only=outstanding_only,
+        limit=limit,
+    )
+    for row in rows:
+        image_key = row.pop("image_key", None)
+        row["image_url"] = oci_storage.get_presigned_url(image_key) if image_key else None
+        row["display_name"] = hazards.display_name(row.get("hazard_class"))
+        row["handling"] = hazards.handling_for(row.get("hazard_class"))
+        row["response_hours"] = hazards.RESPONSE_HOURS.get(
+            row.get("hazard_severity") or "unclassified", 24
+        )
+    return rows
+
+
+@app.get("/hazards/summary")
+def get_hazards_summary(days: int = 30):
+    """Counts, locations, overdue alerts and recurring patterns."""
+    return hazards.summary(days=days)
+
+
+@app.post("/hazards/{event_id}/acknowledge")
+def acknowledge_hazard(event_id: int, body: HazardAcknowledgement):
+    """Marks one hazard as dealt with.
+
+    A second acknowledgement is a 409 rather than an overwrite: two people
+    working the same list should find out they collided, not silently
+    replace each other's record of who handled a syringe.
+    """
+    if not db.acknowledge_hazard(event_id, body.acknowledged_by, body.note):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Hazard {event_id} is not an open flagged event -- it may already be "
+                "acknowledged, or not be a hazard at all."
+            ),
+        )
+    return {"event_id": event_id, "acknowledged_by": body.acknowledged_by}
 
 
 # ---------------------------------------------------------------------------

@@ -236,6 +236,8 @@ def insert_waste_event(
     visible_text=None,
     reusable_condition=None,
     bin_id=None,
+    hazard_class=None,
+    hazard_severity=None,
 ) -> int:
     """bin_id, when given, is the physical can the item was deposited in
     (CANS.can_id). When it is not given it is resolved by matching `location`
@@ -257,10 +259,12 @@ def insert_waste_event(
             f"""
             INSERT INTO waste_events
                 (product_id, detected_object, material, category, location, confidence, image_key, created_at,
-                 hazard_flag, hazard_reason, visible_text, reusable_condition, bin_id)
+                 hazard_flag, hazard_reason, visible_text, reusable_condition, bin_id,
+                 hazard_class, hazard_severity)
             VALUES
                 (:product_id, :detected_object, :material, :category, :location, :confidence, :image_key, {created_at_sql},
-                 :hazard_flag, :hazard_reason, :visible_text, :reusable_condition, :bin_id)
+                 :hazard_flag, :hazard_reason, :visible_text, :reusable_condition, :bin_id,
+                 :hazard_class, :hazard_severity)
             RETURNING event_id INTO :event_id
             """,
             product_id=product_id,
@@ -276,6 +280,8 @@ def insert_waste_event(
             visible_text=visible_text,
             reusable_condition=reusable_condition,
             bin_id=bin_id,
+            hazard_class=hazard_class,
+            hazard_severity=hazard_severity,
             **({"created_at": created_at} if created_at is not None else {}),
         )
         conn.commit()
@@ -641,6 +647,9 @@ _ANALYTICS_MEASURES = """
     SUM(CASE WHEN p.unit_cost IS NULL AND la.avg_cost IS NOT NULL THEN la.avg_cost ELSE 0 END) AS class_cost,
     SUM(CASE WHEN p.unit_weight_grams IS NULL AND la.avg_grams IS NOT NULL THEN la.avg_grams ELSE 0 END) AS class_grams,
     SUM(CASE WHEN COALESCE(p.unit_cost, la.avg_cost) IS NULL THEN 1 ELSE 0 END) AS no_cost_n,
+    SUM(CASE WHEN we.hazard_flag = 1 THEN 1 ELSE 0 END) AS hazard_n,
+    SUM(CASE WHEN we.hazard_flag = 1 AND we.hazard_severity = 'critical' THEN 1 ELSE 0 END)
+        AS hazard_critical_n,
     AVG(we.confidence) AS avg_confidence
 """
 
@@ -667,6 +676,15 @@ ANALYTICS_DIMENSIONS = {
     "floor":            "COALESCE(c.floor, 'unspecified')",
     "intended_stream":  "COALESCE(p.disposal_category, 'unknown')",
     "match_method":     "COALESCE(we.match_method, 'unmatched')",
+    # Non-hazards bucket as 'not hazardous' rather than being excluded, so
+    # the hazard slice is always readable against the whole population
+    # instead of looking like the only thing on campus.
+    "hazard_class":     "CASE WHEN we.hazard_flag = 1 "
+                        "THEN COALESCE(we.hazard_class, 'unclassified') "
+                        "ELSE 'not hazardous' END",
+    "hazard_severity":  "CASE WHEN we.hazard_flag = 1 "
+                        "THEN COALESCE(we.hazard_severity, 'unclassified') "
+                        "ELSE 'not hazardous' END",
     "hour":             "TO_CHAR(we.created_at, 'HH24')",
     "weekday":          "TO_CHAR(TRUNC(we.created_at) - TRUNC(we.created_at, 'IW'))",
     "day":              "TO_CHAR(we.created_at, 'YYYY-MM-DD')",
@@ -1010,6 +1028,221 @@ def analytics_filter_options(days: int | None = 30) -> dict:
                 "WHERE we.created_at >= SYSTIMESTAMP - :days ORDER BY 1"
             ),
         }
+
+
+
+# ---------------------------------------------------------------------------
+# Hazardous disposals (the hazards page)
+# ---------------------------------------------------------------------------
+# Every query here is scoped to HAZARD_FLAG = 1. HAZARD_STATUS predates this
+# work and defaults to 'open' on all 1,090 rows including the ones that are
+# not hazards, so it carries no information on its own and is never the
+# filter.
+
+_HAZARD_SELECT = """
+SELECT we.event_id, we.detected_object, we.material, we.category,
+       we.hazard_reason, we.hazard_class, we.hazard_severity, we.hazard_note,
+       we.confidence, we.created_at, we.image_key,
+       we.acknowledged_at, we.acknowledged_by,
+       we.location, c.can_id, c.can_code, c.floor, c.placement_note,
+       b.building_id, b.name AS building_name, b.campus_area
+FROM waste_events we
+LEFT JOIN cans c ON c.can_id = we.bin_id
+LEFT JOIN buildings b ON b.building_id = c.building_id
+WHERE we.hazard_flag = 1
+"""
+
+
+def _hazard_rows(cursor) -> list[dict]:
+    cols = [d[0].lower() for d in cursor.description]
+    rows = [dict(zip(cols, row)) for row in cursor.fetchall()]
+    for row in rows:
+        for key in ("created_at", "acknowledged_at"):
+            if row.get(key):
+                row[key] = row[key].strftime("%Y-%m-%d %H:%M:%S")
+        if row.get("confidence") is not None:
+            row["confidence"] = float(row["confidence"])
+    return rows
+
+
+def list_hazard_disposals(
+    days: int = 30,
+    severity: str | None = None,
+    hazard_class: str | None = None,
+    building_id: int | None = None,
+    outstanding_only: bool = False,
+    limit: int = 200,
+) -> list[dict]:
+    """Flagged disposals, newest first, with the can and building they were
+    found in.
+
+    `outstanding_only` means nobody has acknowledged it yet, which is the
+    page's default view: an operator opening this wants the work, not the
+    archive.
+    """
+    clauses = []
+    binds: dict = {"days": days, "row_limit": limit}
+    clauses.append("AND we.created_at >= SYSTIMESTAMP - :days")
+    if severity:
+        clauses.append("AND we.hazard_severity = :severity")
+        binds["severity"] = severity
+    if hazard_class:
+        clauses.append("AND we.hazard_class = :hazard_class")
+        binds["hazard_class"] = hazard_class
+    if building_id is not None:
+        clauses.append("AND c.building_id = :building_id")
+        binds["building_id"] = building_id
+    if outstanding_only:
+        clauses.append("AND we.acknowledged_at IS NULL")
+
+    sql = (
+        _HAZARD_SELECT
+        + "\n".join(clauses)
+        + "\nORDER BY we.created_at DESC FETCH FIRST :row_limit ROWS ONLY"
+    )
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(sql, **binds)
+        return _hazard_rows(cursor)
+
+
+def hazard_class_counts(days: int = 30) -> list[dict]:
+    """Counts by class and severity, with how many are still outstanding."""
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT COALESCE(hazard_class, 'unclassified') AS hazard_class,
+                   COALESCE(hazard_severity, 'unclassified') AS severity,
+                   COUNT(*) AS n,
+                   SUM(CASE WHEN acknowledged_at IS NULL THEN 1 ELSE 0 END) AS outstanding
+            FROM waste_events
+            WHERE hazard_flag = 1 AND created_at >= SYSTIMESTAMP - :days
+            GROUP BY COALESCE(hazard_class, 'unclassified'),
+                     COALESCE(hazard_severity, 'unclassified')
+            ORDER BY n DESC
+            """,
+            days=days,
+        )
+        return [
+            {"hazard_class": r[0], "severity": r[1], "count": r[2], "outstanding": r[3]}
+            for r in cursor.fetchall()
+        ]
+
+
+def hazard_location_counts(days: int = 30) -> list[dict]:
+    """Where hazards are turning up, by building and class.
+
+    This is the query the recurrence alert is built on: the same class in the
+    same building repeatedly is a missing collection point, not a run of
+    careless individuals.
+    """
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT COALESCE(b.name, 'unattributed') AS building_name,
+                   b.building_id,
+                   COALESCE(we.hazard_class, 'unclassified') AS hazard_class,
+                   COALESCE(we.hazard_severity, 'unclassified') AS severity,
+                   COUNT(*) AS n,
+                   MAX(we.created_at) AS last_seen,
+                   COUNT(DISTINCT c.can_id) AS cans
+            FROM waste_events we
+            LEFT JOIN cans c ON c.can_id = we.bin_id
+            LEFT JOIN buildings b ON b.building_id = c.building_id
+            WHERE we.hazard_flag = 1 AND we.created_at >= SYSTIMESTAMP - :days
+            GROUP BY b.name, b.building_id, we.hazard_class, we.hazard_severity
+            ORDER BY n DESC
+            """,
+            days=days,
+        )
+        return [
+            {
+                "building_name": r[0],
+                "building_id": r[1],
+                "hazard_class": r[2],
+                "severity": r[3],
+                "count": r[4],
+                "last_seen": r[5].strftime("%Y-%m-%d %H:%M:%S") if r[5] else None,
+                "cans": r[6],
+            }
+            for r in cursor.fetchall()
+        ]
+
+
+def hazard_trend(days: int = 30) -> list[dict]:
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT TO_CHAR(created_at, 'YYYY-MM-DD') AS day,
+                   COALESCE(hazard_severity, 'unclassified') AS severity,
+                   COUNT(*) AS n
+            FROM waste_events
+            WHERE hazard_flag = 1 AND created_at >= SYSTIMESTAMP - :days
+            GROUP BY TO_CHAR(created_at, 'YYYY-MM-DD'),
+                     COALESCE(hazard_severity, 'unclassified')
+            ORDER BY day
+            """,
+            days=days,
+        )
+        return [{"date": r[0], "severity": r[1], "count": r[2]} for r in cursor.fetchall()]
+
+
+def acknowledge_hazard(event_id: int, acknowledged_by: str, note: str | None = None) -> bool:
+    """Marks one hazard as dealt with. Returns False when it was already
+    acknowledged, so the API can say so rather than silently overwriting
+    whoever got there first."""
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE waste_events
+               SET acknowledged_at = SYSTIMESTAMP,
+                   acknowledged_by = :acknowledged_by,
+                   hazard_note = :note,
+                   hazard_status = 'acknowledged'
+             WHERE event_id = :event_id
+               AND hazard_flag = 1
+               AND acknowledged_at IS NULL
+            """,
+            event_id=event_id,
+            acknowledged_by=acknowledged_by,
+            note=note,
+        )
+        changed = cursor.rowcount
+        conn.commit()
+        return changed > 0
+
+
+def set_hazard_classification(rows: list[dict]) -> int:
+    """Batch-writes {event_id, hazard_class, hazard_severity} back onto
+    flagged events, so the classification is stored rather than recomputed on
+    every page load and can be queried and grouped in SQL."""
+    if not rows:
+        return 0
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.executemany(
+            """
+            UPDATE waste_events
+               SET hazard_class = :hazard_class, hazard_severity = :hazard_severity
+             WHERE event_id = :event_id
+            """,
+            rows,
+        )
+        conn.commit()
+    return len(rows)
+
+
+def list_unclassified_hazards() -> list[tuple]:
+    """(event_id, detected_object, hazard_reason) for flagged events that have
+    no class yet -- what the classifier backfill works through."""
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT event_id, detected_object, hazard_reason
+            FROM waste_events
+            WHERE hazard_flag = 1 AND hazard_class IS NULL
+            ORDER BY event_id
+            """
+        )
+        return cursor.fetchall()
 
 
 # ---------------------------------------------------------------------------

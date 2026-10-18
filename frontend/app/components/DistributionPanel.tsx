@@ -37,6 +37,8 @@ const DIMENSION_LABEL: Record<string, string> = {
   floor: "floor",
   intended_stream: "intended stream",
   match_method: "how it was matched",
+  hazard_class: "hazard type",
+  hazard_severity: "hazard severity",
   hour: "hour of day",
   weekday: "weekday",
   day: "date",
@@ -47,7 +49,8 @@ const DIMENSION_LABEL: Record<string, string> = {
 const DIMENSION_ORDER = [
   "material", "material_subtype", "object", "variant", "brand", "product",
   "sku", "supplier", "category", "intended_stream", "building", "campus_area",
-  "can", "floor", "hour", "weekday", "day", "match_method",
+  "can", "floor", "hazard_class", "hazard_severity", "hour", "weekday", "day",
+  "match_method",
 ];
 
 export default function DistributionPanel({

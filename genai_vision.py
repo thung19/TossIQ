@@ -67,15 +67,47 @@ Return ONLY valid JSON with these fields:
   "material": "one of: plastic, metal, glass, paper, cardboard, organic, other -- or null if you cannot tell",
   "material_subtype": "a more specific material if visually identifiable, e.g. 'PET', 'HDPE', 'aluminum', 'steel', 'corrugated cardboard' -- or null if you cannot tell",
   "food_contaminated": true if the item has visible food or liquid residue on it, false if it looks clean, or null if you cannot tell,
-  "hazard_flag": true if you see a visible battery compartment, chemical or hazard warning symbol, sharps, or similar hazard indicator, false if you see none, or null if genuinely unclear from the image,
-  "hazard_reason": "a short description of what hazard indicator you saw if hazard_flag is true, or null otherwise",
+  "hazard_flag": true if the item is or contains any of the hazards listed below, false if you can see it is none of them, or null if genuinely unclear from the image,
+  "hazard_reason": "a short description of WHAT you saw that makes it hazardous if hazard_flag is true, naming the specific hazard from the list below, or null otherwise",
   "visible_text": "any readable brand name, product name, or label text visible on the item, or null if none is visible or legible",
   "reusable_condition": "one of: intact, damaged, depleted -- intact means it looks unused/undamaged and plausibly reusable, damaged means it is visibly broken or torn, depleted means it is visibly empty or used up (e.g. an empty bottle vs. a full one) -- or null if not visually determinable"
 }
 
+Hazards to watch for, and the words to use for them in hazard_reason. These
+are the categories the handling procedure is written against, so naming the
+specific one matters more than describing it well:
+
+  vape, e-cigarette      a disposable vape, vape pen or nicotine pod. These
+                         contain a sealed lithium cell and are the single
+                         most common dangerous item in a campus bin.
+  lithium battery        a power bank, laptop or phone battery, or any
+                         rechargeable cell. Say "lithium" if you can see it.
+                         Note if it looks swollen or split.
+  battery                an AA, AAA, 9V, button or coin cell, or a visible
+                         battery compartment with a cell still in it.
+  sharps                 a needle, syringe, lancet, scalpel or razor blade.
+  aerosol                a spray can, deodorant, air freshener or spray
+                         paint can.
+  gas cylinder           a propane, butane or CO2 cartridge.
+  chemical               a solvent, bleach, acid, reagent, paint tin or
+                         pesticide, or any container with a hazard diamond
+                         or corrosive/flammable symbol.
+  mercury                a fluorescent tube, CFL bulb or thermometer.
+  pharmaceutical         a pill bottle, blister pack, inhaler or anything
+                         with a prescription label.
+  electronic waste       a charger, cable, headphones, circuit board or
+                         other powered device.
+
+If the item is hazardous but matches none of these, still set hazard_flag
+true and describe what you saw -- an unrecognised hazard that says so is
+handled safely, one quietly left unflagged is not.
+
 Only describe what is visually identifiable in the image. Do not guess a
 disposal category -- just describe the object. Use null for any field you
-are not confident about.
+are not confident about, EXCEPT hazard_flag: prefer true over null when
+something looks like it might be on the list above, because a false alarm
+costs an operator thirty seconds and a missed lithium cell can set a truck
+on fire.
 Return ONLY the JSON object, with no extra text, explanation, or markdown fences.
 """
 
