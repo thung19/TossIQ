@@ -1,9 +1,9 @@
 // Every call stays a same-origin relative path so the same code works behind
 // the Vite dev proxy and behind the FastAPI static mount in production.
 
-// FastAPI reports its own errors as `{"detail": "..."}`, so unwrap that before
-// the message reaches a status line. Anything else (a proxy error page, an
-// empty body) falls back to the raw text and then to the status code, so a
+// FastAPI reports its own upload errors as `{"detail": "..."}`, so unwrap that
+// before the message reaches a status line. Anything else (a proxy error page,
+// an empty body) falls back to the raw text and then to the status code, so a
 // failed request always has something to say.
 async function errorMessage(res) {
   const text = await res.text();
@@ -28,7 +28,7 @@ export async function postJSON(url, body) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(await errorMessage(res));
+  if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 

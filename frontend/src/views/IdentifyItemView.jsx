@@ -2,11 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import { postForm } from '../api.js';
 import CategoryLabel from '../components/CategoryLabel.jsx';
 
-// Mirrors ALLOWED_CONTENT_TYPES in api.py. Checking here means an unsupported
-// image gets the same answer without spending a cloud analysis call on it.
-const ACCEPTED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
-const ACCEPT_ATTR = ACCEPTED_TYPES.join(',');
-
 const FOOD_CONTAMINATED_LABEL = { true: 'Yes', false: 'No' };
 
 /** One labelled result field. Rendered only by the caller when it has a value. */
@@ -67,10 +62,6 @@ export default function IdentifyItemView({ hidden }) {
     if (!candidate) return;
     if (!candidate.type.startsWith('image/')) {
       reject(`"${candidate.name}" is not an image file. Choose a JPEG, PNG, or WebP image.`);
-      return;
-    }
-    if (!ACCEPTED_TYPES.includes(candidate.type)) {
-      reject(`${candidate.type} images are not supported. Choose a JPEG, PNG, or WebP image.`);
       return;
     }
     setFile(candidate);
@@ -165,7 +156,7 @@ export default function IdentifyItemView({ hidden }) {
                 id="identifyFile"
                 ref={fileRef}
                 type="file"
-                accept={ACCEPT_ATTR}
+                accept="image/*"
                 aria-label="Image to identify"
                 onChange={(e) => selectFile(e.target.files?.[0])}
               />
@@ -230,9 +221,7 @@ export default function IdentifyItemView({ hidden }) {
               ) : null}
 
               <div className="status-msg status-good">
-                {result.event_id
-                  ? `Logged as waste event #${result.event_id}; it now counts in the dashboard's totals and recent events.`
-                  : 'Logged as a waste event; it now counts in the dashboard, though no event id came back.'}
+                {`Logged as waste event #${result.event_id}; it now counts in the dashboard's totals and recent events.`}
               </div>
             </>
           ) : (
