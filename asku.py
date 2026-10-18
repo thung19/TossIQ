@@ -64,6 +64,8 @@ MAX_TOKENS = 700
 MAX_CATALOG_MATCH_ROWS = 15
 MAX_LOCATION_ROWS = 30
 MAX_HAZARD_ROWS = 15
+MAX_TREND_ROWS = 90
+MAX_PRODUCT_ROWS = 30
 RECENT_EVENT_LIMIT = 15
 
 SYSTEM_PROMPT = """
@@ -86,16 +88,19 @@ Rules:
   recommendation you make must cite the specific observation it follows from.
 - Keep observation and inference distinguishable: say which figures were
   observed, and label anything you infer from them as an inference.
-- The observations cover a fixed time window, stated in the block. Do not answer
-  about any other period; say what window the data covers instead.
+- Each section covers the period its own title states: most cover the window
+  stated at the top of the block, and a section whose title says "any date" is
+  not limited to that window. Answer from the sections whose stated scope fits
+  the question, name that scope, and never present a figure as covering a
+  period other than the scope of the section it came from.
 - Be concise and concrete. A few sentences is usually enough.
 """
 
 NO_OBSERVATIONS_NOTICE = (
-    "NOTE: NO DISPOSAL EVENTS ARE RECORDED IN THIS WINDOW. There is no observed "
-    "data about items, categories, locations, hazards, or costs for this period. "
-    "No question about disposals can be answered from this block: say that the "
-    "system has recorded no events for this window instead of answering."
+    "NOTE: NO DISPOSAL EVENTS ARE RECORDED IN THIS WINDOW. The sections scoped "
+    "to this window therefore hold no observed data about items, categories, "
+    "locations, hazards, or costs for this period. Sections whose titles state a "
+    "different scope still hold whatever they list."
 )
 
 OBSERVATIONS_HEADER = "OBSERVATIONS"
@@ -185,7 +190,11 @@ def _top_item_lines(overview: dict) -> list[str]:
 def _trend_lines(overview: dict) -> list[str]:
     if not overview["trend"]:
         return ["(no days with recorded disposals in this window)"]
-    return [f"{row['date']}: {row['count']} items" for row in overview["trend"]]
+    rows, note = _capped(overview["trend"], MAX_TREND_ROWS)
+    lines = [f"{row['date']}: {row['count']} items" for row in rows]
+    if note:
+        lines.append(note)
+    return lines
 
 
 def _catalog_match_lines(items: list[dict]) -> list[str]:
@@ -257,13 +266,17 @@ def _recent_event_lines(recent_events: list[dict]) -> list[str]:
 def _product_lines(products: list[dict]) -> list[str]:
     if not products:
         return ["(no products are registered in the organization's catalog)"]
-    return [
+    rows, note = _capped(products, MAX_PRODUCT_ROWS)
+    lines = [
         f"{row['product_name']} (sku {row['sku'] or 'none'}, "
         f"supplier {row['supplier'] or 'none'}, "
         f"material {row['material'] or 'unrecorded'}, "
         f"unit cost {_money(row['unit_cost']) if row['unit_cost'] is not None else 'unrecorded'})"
-        for row in products
+        for row in rows
     ]
+    if note:
+        lines.append(note)
+    return lines
 
 
 def observation_sections(observations: dict) -> list[dict]:

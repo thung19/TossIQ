@@ -273,6 +273,54 @@ class EmptyDatasetPromptTests(unittest.TestCase):
             self.assertNotIn(figure, user)
 
 
+class EmptyWindowWithOlderDataPromptTests(unittest.TestCase):
+    """Regression: a window with no events while older events exist.
+
+    The emitted prompt is this module's generated interface to the chat
+    model. It must never carry real observed rows and, at the same time, an
+    instruction to report that nothing is recorded -- the model would obey
+    the instruction and deny data it was shown.
+    """
+
+    def setUp(self):
+        _patch_db(
+            self,
+            overview=EMPTY_OVERVIEW,
+            items=[],
+            locations=[],
+            hazard_events=[],
+        )
+        self.observations = asku.collect_observations(days=7)
+        self.prompt = asku.build_prompt(self.observations, "What was the last item thrown away?")
+
+    def test_any_date_observations_are_still_carried(self):
+        user = self.prompt["user"]
+        self.assertIn("Total items logged: 0", user)
+        self.assertIn("'chip bag'", user)
+        self.assertIn("sorted as landfill at VU-ALUMNI-01", user)
+        self.assertIn("Dining Hall Water Bottle", user)
+
+    def test_the_empty_notice_does_not_instruct_a_blanket_denial(self):
+        user = self.prompt["user"]
+        for denial in (
+            "No question about disposals can be answered",
+            "instead of answering",
+            "cannot be answered",
+        ):
+            self.assertNotIn(denial, user)
+
+    def test_the_empty_notice_is_scoped_to_the_window(self):
+        notice = asku.NO_OBSERVATIONS_NOTICE
+        self.assertIn(notice, self.prompt["user"])
+        self.assertIn("IN THIS WINDOW", notice)
+        self.assertIn("different scope", notice)
+
+    def test_the_window_rule_permits_sections_that_state_their_own_scope(self):
+        system = self.prompt["system"]
+        self.assertNotIn("Do not answer\n  about any other period", system)
+        self.assertIn('a section whose title says "any date" is', system)
+
+
 class CappingTests(unittest.TestCase):
     def test_long_sections_are_truncated_with_the_full_row_count_stated(self):
         locations = [
@@ -288,6 +336,47 @@ class CappingTests(unittest.TestCase):
         self.assertEqual(
             lines[-1],
             f"(showing the first {asku.MAX_LOCATION_ROWS} of {len(locations)} rows)",
+        )
+
+    def test_the_product_catalog_section_is_capped(self):
+        products = [
+            {
+                "product_id": i,
+                "product_name": f"Product {i}",
+                "supplier": None,
+                "sku": None,
+                "material": None,
+                "unit_cost": None,
+            }
+            for i in range(asku.MAX_PRODUCT_ROWS + 7)
+        ]
+        _patch_db(self, products=products)
+
+        lines = asku.observation_sections(asku.collect_observations(days=30))[7]["lines"]
+
+        self.assertEqual(len(lines), asku.MAX_PRODUCT_ROWS + 1)
+        self.assertEqual(
+            lines[-1],
+            f"(showing the first {asku.MAX_PRODUCT_ROWS} of {len(products)} rows)",
+        )
+
+    def test_the_per_day_trend_section_is_capped(self):
+        overview = dict(
+            EMPTY_OVERVIEW,
+            total_items=asku.MAX_TREND_ROWS + 3,
+            trend=[
+                {"date": f"day-{i:03d}", "count": 1}
+                for i in range(asku.MAX_TREND_ROWS + 3)
+            ],
+        )
+        _patch_db(self, overview=overview)
+
+        lines = asku.observation_sections(asku.collect_observations(days=365))[2]["lines"]
+
+        self.assertEqual(len(lines), asku.MAX_TREND_ROWS + 1)
+        self.assertEqual(
+            lines[-1],
+            f"(showing the first {asku.MAX_TREND_ROWS} of {asku.MAX_TREND_ROWS + 3} rows)",
         )
 
 

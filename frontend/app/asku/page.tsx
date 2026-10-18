@@ -7,13 +7,6 @@ import { apiPost, type AskuAnswer } from "../../lib/api";
 
 const WINDOW_OPTIONS = [7, 30, 90];
 
-const EXAMPLE_QUESTIONS = [
-  "Which item is discarded most often, and how many times?",
-  "Which location sends the most to landfill?",
-  "Has anything been flagged as hazardous?",
-  "What catalog products are we throwing away, and what is that worth?",
-];
-
 type Turn = {
   id: number;
   question: string;
@@ -76,14 +69,7 @@ export default function AskuPage() {
         <section className="transcript">
           {turns.length === 0 && (
             <div className="empty">
-              <span className="empty-label">try asking</span>
-              <div className="examples">
-                {EXAMPLE_QUESTIONS.map((q) => (
-                  <button key={q} type="button" className="example" onClick={() => ask(q)}>
-                    {q}
-                  </button>
-                ))}
-              </div>
+              <span className="empty-label">no questions asked yet</span>
             </div>
           )}
 
@@ -174,21 +160,6 @@ export default function AskuPage() {
           font-size: 10.5px;
           color: var(--text-dim);
           text-transform: lowercase;
-        }
-        .examples {
-          display: flex;
-          flex-direction: column;
-          align-items: flex-start;
-          gap: 4px;
-        }
-        .example {
-          text-align: left;
-          font-size: 12.5px;
-          color: var(--link);
-          padding: 3px 0;
-        }
-        .example:hover {
-          color: var(--mention-text);
         }
         .turn {
           display: flex;

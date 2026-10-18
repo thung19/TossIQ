@@ -121,8 +121,8 @@ class SortResponse(BaseModel):
 
 
 class AskuRequest(BaseModel):
-    question: str = Field(..., min_length=1)
-    days: int = asku.DEFAULT_WINDOW_DAYS
+    question: str = Field(..., min_length=1, max_length=2000)
+    days: int = Field(asku.DEFAULT_WINDOW_DAYS, ge=1, le=365)
 
 
 class AskuObservationSection(BaseModel):
