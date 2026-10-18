@@ -672,7 +672,11 @@ def get_recommendations(limit: int = 20):
 
 
 @app.get("/recommendations/insights")
-def get_recommendation_insights(days: int = 30, limit: int | None = None):
+def get_recommendation_insights(
+    days: int = 30,
+    limit: int | None = None,
+    include_minor: bool = False,
+):
     """Evidence-carrying recommendations for the recommendations page.
 
     Each item arrives with the observations it was derived from, so the UI
@@ -680,7 +684,7 @@ def get_recommendation_insights(days: int = 30, limit: int | None = None):
     a confident sentence with nothing behind it. Shaping lives in
     recommendations.py; nothing here computes a figure.
     """
-    return recommendations.generate(days=days, limit=limit)
+    return recommendations.generate(days=days, limit=limit, include_minor=include_minor)
 
 
 @app.post("/recommendations/generate")

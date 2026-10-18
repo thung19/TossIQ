@@ -26,6 +26,7 @@ Two things every money figure here obeys:
 
 import db
 import fleet
+import impact
 
 # Dish-machine labour, water, energy and detergent per item, per the sort of
 # figure campus dining operations publish. It is an ASSUMPTION, not an
@@ -36,6 +37,45 @@ WASH_COST_PER_USE = 0.04
 # No rule fires below this many observations. A recommendation drawn from
 # four disposals is noise wearing a suit.
 MIN_OBSERVATIONS = 8
+
+# Materiality. A recommendation has to be worth somebody's afternoon, and
+# "save $13 a year on hot cups" is not -- it costs more attention to read
+# than it returns, and a page full of them teaches the reader to skip the
+# page. A proposal must clear ONE of these to be shown:
+#
+#   * real money, or
+#   * real carbon, for the switches whose case is environmental rather than
+#     financial (a paper straw costs MORE than a plastic one; ranking on
+#     dollars alone would argue against it).
+#
+# Operational rules -- overflowing bins, mis-sited cans, collection rounds --
+# are exempt. They are about service quality, and a bin overflowing at noon
+# is worth fixing whatever it saves.
+# Both numbers are judgement calls sized for this deployment, not measured
+# quantities, and they are published in the response so they can be argued
+# with and retuned. $250 is roughly the point at which a change is worth a
+# purchase order; 100 kg CO2e a year is roughly 400 km of driving, small but
+# not nothing for one line item.
+MIN_ANNUAL_SAVING = 250.0
+MIN_ANNUAL_CO2E_KG = 100.0
+
+# Contamination is judged on item count, not tonnage. A few hundred grams of
+# straws in the wrong stream is trivial by mass and not at all trivial in
+# effect: a contaminated load gets rejected whole.
+MIN_MISROUTE_ITEMS = 25
+
+# Most cards any one rule may contribute. Six buildings showing the same
+# placement problem is six real findings and one thing to do; listing them
+# all buries every other kind of recommendation under a single pattern.
+MAX_PER_RULE = 3
+
+# A refill station, installed. An ASSUMPTION like WASH_COST_PER_USE, named
+# here and surfaced in the recommendation so it can be argued with.
+REFILL_STATION_COST = 1400.0
+
+# Percentage points between the fullest and emptiest can in one building
+# before the bins are in the wrong places rather than simply busy.
+FILL_SPREAD_POINTS = 45.0
 
 # A building needs its typical can to be this many times the campus-wide
 # typical can before more bins are the answer.
@@ -88,6 +128,9 @@ def recommendation(
     annual_saving: float | None = None,
     confidence: str = "medium",
     caveat: str | None = None,
+    annual_co2e_kg: float | None = None,
+    annual_landfill_kg: float | None = None,
+    exempt_from_materiality: bool = False,
 ) -> dict:
     """One recommendation.
 
@@ -105,8 +148,14 @@ def recommendation(
         "basis": basis,
         "window_days": window_days,
         "annual_saving": round(annual_saving, 2) if annual_saving is not None else None,
+        "annual_co2e_kg": round(annual_co2e_kg, 1) if annual_co2e_kg is not None else None,
+        "annual_landfill_kg": round(annual_landfill_kg, 1) if annual_landfill_kg is not None else None,
         "confidence": confidence,
         "caveat": caveat,
+        # Service-quality rules are judged on whether something is broken,
+        # not on what fixing it returns.
+        "exempt_from_materiality": exempt_from_materiality,
+        "below_threshold": False,
     }
 
 
@@ -171,109 +220,288 @@ def build_context(days: int) -> dict:
 # None of them query directly, so adding a rule costs no round trips unless
 # it genuinely needs data nothing else uses.
 
-def switch_to_reusable(context: dict) -> list[dict]:
-    """Disposables being thrown away in volume that the catalog names a
-    reusable replacement for.
+def switch_products(context: dict) -> list[dict]:
+    """Disposables the catalog names a replacement for.
 
-    The arithmetic is cost per use on both sides, not sticker price: a $4.20
-    mug is more expensive than an $0.11 cup exactly once, and the crossover
-    is what the operator needs to see.
+    Three different recommendations share this rule because they share the
+    arithmetic, and they are kept apart because they are not
+    interchangeable:
+
+      infrastructure  remove the purchase. A tap instead of a bottle. The
+                      large wins, and the only ones with capital cost
+                      outside the catalog.
+      material        a different disposable. Changes the order and nothing
+                      about how the counter runs, so it is viable anywhere.
+      reuse           a reusable programme. Needs service where the item
+                      comes back on a tray; offering ceramic mugs to a
+                      grab-and-go counter is advice nobody can take.
+
+    A switch is DROPPED when it improves neither money nor carbon. Foam cup
+    to paper cup is the live example: the paper replacement is four times
+    the mass and both go to landfill, so it is worse on both counts here and
+    the engine declines to cheerlead it.
     """
     days = context["days"]
-    out = []
     products = context["products"]
-    rows = context["by_sku"]
+    out = []
 
-    for row in rows:
+    for row in context["by_sku"]:
         product = products.get(row["bucket"])
         if not product or not product.get("substitute_sku"):
             continue
         replacement = products.get(product["substitute_sku"])
-        if not replacement or not replacement.get("reusable"):
+        if not replacement:
             continue
-
         count = row["n"]
         if count < MIN_OBSERVATIONS:
             continue
 
-        disposable_per_use = product["unit_cost"] or 0.0
-        uses = replacement.get("expected_uses") or 1
-        reusable_per_use = (replacement["unit_cost"] or 0.0) / uses + WASH_COST_PER_USE
-        saving_per_use = disposable_per_use - reusable_per_use
-        if saving_per_use <= 0:
-            continue
-
+        kind = product.get("substitute_kind") or "material"
         annual_units = _annualise(count, days)
-        annual_saving = annual_units * saving_per_use
-        # One reusable unit covers a day's turns; a fleet sized to the daily
-        # peak is the honest capital figure, not one unit per annual use.
-        daily_units = count / max(1, days)
-        fleet_size = max(1, round(daily_units * 1.5))
-        upfront = fleet_size * (replacement["unit_cost"] or 0.0)
-        payback_months = (upfront / annual_saving * 12) if annual_saving > 0 else None
+        carbon = impact.switch_co2e(product, replacement, annual_units)
 
-        out.append(recommendation(
-            key=f"reusable:{product['sku']}",
-            kind="procurement",
-            title=f"Replace {product['product_name']} with the {replacement['product_name']}",
-            summary=(
-                f"{count} units went in the bin over {days} days. At "
-                f"{_money(disposable_per_use)} each against "
-                f"{_money(reusable_per_use)} per use for the reusable, the switch "
-                f"saves about {_money(annual_saving)} a year."
-            ),
-            action=(
-                f"Pilot {_plural(fleet_size, 'unit')} of {replacement['sku']} "
-                f"({_money(upfront)} up front) in the highest-volume building first."
-            ),
-            annual_saving=annual_saving,
-            confidence="high" if count >= MIN_OBSERVATIONS * 4 else "medium",
-            window_days=days,
-            basis=(
-                f"Counted from disposals matched to {product['sku']} in WASTE_EVENTS "
-                f"over {days} days, priced from the PRODUCTS catalog."
-            ),
-            caveat=(
-                f"Washing is assumed at {_money(WASH_COST_PER_USE)} per use, the one "
-                "figure here not measured from your data. "
-                + (product.get("substitute_note") or "")
-            ),
-            evidence=[
-                metric("Units discarded", f"{count:,}", f"over the last {days} days"),
-                metric("Projected annual units", f"{annual_units:,.0f}",
-                       "straight-line from the window above"),
-                metric("Projected annual saving", _money(annual_saving),
-                       "difference in cost per use, times annual units"),
-                metric("Payback", f"{payback_months:.1f} months" if payback_months else "—",
-                       f"{fleet_size} units at {_money(replacement['unit_cost'] or 0)} each"),
-                table(
-                    "Cost per use",
-                    ["", "unit price", "uses per unit", "washing", "cost per use"],
-                    [
-                        [product["product_name"], _money(disposable_per_use), "1", "—",
-                         _money(disposable_per_use)],
-                        [replacement["product_name"], _money(replacement["unit_cost"] or 0),
-                         f"{uses:,}", _money(WASH_COST_PER_USE), _money(reusable_per_use)],
-                    ],
-                    "Catalog prices. The reusable amortises its price over its rated "
-                    "service life, then pays washing on every use.",
-                ),
-                table(
-                    "Disposal footprint avoided",
-                    ["measure", "value"],
-                    [
-                        ["Stream today", product.get("disposal_category") or "unknown"],
-                        ["Estimated mass discarded",
-                         f"{(product.get('unit_weight_grams') or 0) * count / 1000:.1f} kg"],
-                        ["Supplier", product.get("supplier") or "—"],
-                    ],
-                    "Mass is items times the catalog reference weight; nothing is weighed.",
-                ),
-            ],
-        ))
+        builder = {
+            "infrastructure": _infrastructure_switch,
+            "reuse": _reuse_switch,
+            "material": _material_switch,
+        }.get(kind, _material_switch)
 
-    out.sort(key=lambda r: r["annual_saving"] or 0, reverse=True)
+        proposal = builder(product, replacement, count, annual_units, carbon, days)
+        if proposal:
+            out.append(proposal)
+
     return out
+
+
+def _infrastructure_switch(product, replacement, count, annual_units, carbon, days) -> dict | None:
+    """Stop buying the item at all. The saving is the whole purchase price,
+    not a difference in cost per use, because nothing replaces it one for
+    one -- a refill station serves everybody."""
+    annual_saving = annual_units * (product["unit_cost"] or 0.0)
+    stations = max(1, round(annual_units / 4000))
+    upfront = stations * REFILL_STATION_COST
+    payback_months = (upfront / annual_saving * 12) if annual_saving > 0 else None
+
+    return recommendation(
+        key=f"infrastructure:{product['sku']}",
+        kind="infrastructure",
+        title=f"Install refill stations to displace {product['product_name']}",
+        summary=(
+            f"{count} bottles went in the bin over {days} days, about "
+            f"{annual_units:,.0f} a year at {_money(product['unit_cost'] or 0)} each. "
+            f"A tap removes the purchase rather than replacing it, avoiding "
+            f"{_money(annual_saving)} and {impact.describe_co2e(carbon['production_saved_kg'])} "
+            "a year."
+        ),
+        action=(
+            f"Install {_plural(stations, 'refill station')} "
+            f"({_money(upfront)} up front) at the buildings where these bottles are "
+            "being thrown away, and stop stocking the SKU there."
+        ),
+        annual_saving=annual_saving,
+        annual_co2e_kg=carbon["production_saved_kg"],
+        annual_landfill_kg=None,
+        confidence="high" if count >= MIN_OBSERVATIONS * 4 else "medium",
+        window_days=days,
+        basis=(
+            f"Counted from disposals matched to {product['sku']} in WASTE_EVENTS over "
+            f"{days} days, priced from the PRODUCTS catalog and carbon-weighted by "
+            "catalog reference mass."
+        ),
+        caveat=(
+            f"Station cost is assumed at {_money(REFILL_STATION_COST)} installed, and the "
+            "saving assumes the bottles are simply not bought rather than bought "
+            "elsewhere on campus. "
+            + (product.get("substitute_note") or "")
+        ),
+        evidence=[
+            metric("Bottles discarded", f"{count:,}", f"over the last {days} days"),
+            metric("Projected annual purchases avoided", f"{annual_units:,.0f}",
+                   "straight-line from the window"),
+            metric("Projected annual saving", _money(annual_saving),
+                   "full purchase price, not a per-use difference"),
+            metric("Avoided production carbon",
+                   impact.describe_co2e(carbon["production_saved_kg"]),
+                   "bottles never manufactured"),
+            metric("Payback", f"{payback_months:.1f} months" if payback_months else "—",
+                   f"{_plural(stations, 'station')} at {_money(REFILL_STATION_COST)}"),
+            table(
+                "Why a station rather than handing out flasks",
+                ["approach", "serves", "up-front", "fails when"],
+                [
+                    ["Refill station", "everyone who walks past", _money(upfront),
+                     "the tap is far from where people buy"],
+                    [f"Issue {replacement['product_name']}", "one person per unit",
+                     _money(annual_units / 200 * (replacement["unit_cost"] or 0)),
+                     "the flask is at home, which is most days"],
+                ],
+                "Infrastructure does not depend on anyone remembering to carry "
+                "something, which is why it is the recommendation here.",
+            ),
+            table(
+                "Disposal footprint today",
+                ["measure", "value"],
+                [
+                    ["Stream", product.get("disposal_category") or "unknown"],
+                    ["Estimated mass discarded",
+                     _mass((product.get("unit_weight_grams") or 0) * count)],
+                    ["Supplier", product.get("supplier") or "—"],
+                ],
+                impact.DISCLAIMER,
+            ),
+        ],
+    )
+
+
+def _reuse_switch(product, replacement, count, annual_units, carbon, days) -> dict | None:
+    """A reusable programme, costed per use rather than per unit."""
+    disposable_per_use = product["unit_cost"] or 0.0
+    uses = max(1, replacement.get("expected_uses") or 1)
+    reusable_per_use = (replacement["unit_cost"] or 0.0) / uses + WASH_COST_PER_USE
+    saving_per_use = disposable_per_use - reusable_per_use
+    if saving_per_use <= 0 and carbon["net_co2e_kg"] <= 0:
+        return None
+
+    annual_saving = max(0.0, annual_units * saving_per_use)
+    daily_units = count / max(1, days)
+    fleet_size = max(1, round(daily_units * 1.5))
+    upfront = fleet_size * (replacement["unit_cost"] or 0.0)
+    payback_months = (upfront / annual_saving * 12) if annual_saving > 0 else None
+
+    return recommendation(
+        key=f"reuse:{product['sku']}",
+        kind="procurement",
+        title=f"Run a {replacement['product_name']} programme for dine-in service",
+        summary=(
+            f"{count} units of {product['product_name']} went in the bin over {days} days. "
+            f"At {_money(disposable_per_use)} each against {_money(reusable_per_use)} per use "
+            f"for the reusable, a dine-in programme saves about {_money(annual_saving)} and "
+            f"{impact.describe_co2e(carbon['net_co2e_kg'])} a year."
+        ),
+        action=(
+            f"Pilot {_plural(fleet_size, 'unit')} of {replacement['sku']} "
+            f"({_money(upfront)} up front) on seated service only, keeping disposables "
+            "at the takeaway counter."
+        ),
+        annual_saving=annual_saving,
+        annual_co2e_kg=carbon["net_co2e_kg"],
+        confidence="high" if count >= MIN_OBSERVATIONS * 4 else "medium",
+        window_days=days,
+        basis=(
+            f"Counted from disposals matched to {product['sku']} over {days} days, priced "
+            "from the catalog, with the reusable amortised over its rated service life."
+        ),
+        caveat=(
+            f"Only applies where service is seated and the item comes back on a tray -- "
+            f"at a grab-and-go counter nothing returns and this saves nothing. Washing is "
+            f"assumed at {_money(WASH_COST_PER_USE)} per use. "
+            + (product.get("substitute_note") or "")
+        ),
+        evidence=[
+            metric("Units discarded", f"{count:,}", f"over the last {days} days"),
+            metric("Projected annual saving", _money(annual_saving),
+                   "difference in cost per use, times annual units"),
+            metric("Net carbon", impact.describe_co2e(carbon["net_co2e_kg"]),
+                   "production avoided, less the reusable's own footprint"),
+            metric("Payback", f"{payback_months:.1f} months" if payback_months else "—",
+                   f"{_plural(fleet_size, 'unit')} at {_money(replacement['unit_cost'] or 0)}"),
+            table(
+                "Cost per use",
+                ["", "unit price", "uses per unit", "washing", "cost per use"],
+                [
+                    [product["product_name"], _money(disposable_per_use), "1", "—",
+                     _money(disposable_per_use)],
+                    [replacement["product_name"], _money(replacement["unit_cost"] or 0),
+                     f"{uses:,}", _money(WASH_COST_PER_USE), _money(reusable_per_use)],
+                ],
+                "The reusable amortises its price over its rated service life, then "
+                "pays washing on every use.",
+            ),
+        ],
+    )
+
+
+def _material_switch(product, replacement, count, annual_units, carbon, days) -> dict | None:
+    """A different disposable for the same job.
+
+    Ranked on carbon, not cost, because the better material is routinely the
+    dearer one -- a paper straw costs twice a polypropylene one -- and a page
+    that ranked this on dollars would recommend against it. A switch that
+    improves neither is dropped.
+    """
+    cost_delta_per_unit = (product["unit_cost"] or 0.0) - (replacement["unit_cost"] or 0.0)
+    annual_cost_delta = annual_units * cost_delta_per_unit
+    net_co2e = carbon["net_co2e_kg"]
+    landfill = carbon["landfill_avoided_kg"]
+
+    if net_co2e <= 0 and landfill <= 0 and annual_cost_delta <= 0:
+        return None
+
+    dearer = annual_cost_delta < 0
+    cost_phrase = (
+        f"costs {_money(abs(annual_cost_delta))} a year more"
+        if dearer
+        else f"saves {_money(annual_cost_delta)} a year"
+    )
+
+    return recommendation(
+        key=f"material:{product['sku']}",
+        kind="sustainability",
+        title=f"Switch from {product['product_name']} to {replacement['product_name']}",
+        summary=(
+            f"{count} units over {days} days, about {annual_units:,.0f} a year. The switch "
+            f"{cost_phrase} and "
+            + (
+                f"keeps {landfill:.0f} kg out of landfill annually."
+                if landfill > 0
+                else f"avoids {impact.describe_co2e(net_co2e)} a year."
+            )
+        ),
+        action=(
+            f"Change the standing order from {product['sku']} to {replacement['sku']} "
+            f"with {replacement.get('supplier') or 'the same supplier'}."
+        ),
+        annual_saving=annual_cost_delta if annual_cost_delta > 0 else None,
+        annual_co2e_kg=net_co2e if net_co2e > 0 else None,
+        annual_landfill_kg=landfill if landfill > 0 else None,
+        confidence="high" if count >= MIN_OBSERVATIONS * 3 else "medium",
+        window_days=days,
+        basis=(
+            f"Counted from disposals matched to {product['sku']} over {days} days. Carbon "
+            "and mass are catalog reference weights times an emission factor."
+        ),
+        caveat=(
+            ("This replacement costs more per unit; the case for it is environmental, "
+             "not financial. " if dearer else "")
+            + impact.DISCLAIMER
+            + " " + (product.get("substitute_note") or "")
+        ),
+        evidence=[
+            metric("Units a year", f"{annual_units:,.0f}", f"from {count} over {days} days"),
+            metric("Annual cost change",
+                   ("+" if dearer else "−") + _money(abs(annual_cost_delta)),
+                   "more expensive" if dearer else "cheaper"),
+            metric("Landfill avoided", f"{landfill:.0f} kg/yr" if landfill > 0 else "—",
+                   "mass moved out of the landfill stream"),
+            metric("Net carbon", impact.describe_co2e(net_co2e), "production and disposal"),
+            table(
+                "The two products side by side",
+                ["", "unit cost", "mass", "stream", "material"],
+                [
+                    [product["product_name"], _money(product["unit_cost"] or 0),
+                     _mass(product.get("unit_weight_grams") or 0),
+                     product.get("disposal_category") or "—",
+                     product.get("material_subtype") or product.get("material") or "—"],
+                    [replacement["product_name"], _money(replacement["unit_cost"] or 0),
+                     _mass(replacement.get("unit_weight_grams") or 0),
+                     replacement.get("disposal_category") or "—",
+                     replacement.get("material_subtype") or replacement.get("material") or "—"],
+                ],
+                "A heavier replacement can be worse on carbon even with a better "
+                "stream, which is why both columns are here.",
+            ),
+        ],
+    )
 
 
 def add_or_relocate_cans(context: dict) -> list[dict]:
@@ -334,6 +562,7 @@ def add_or_relocate_cans(context: dict) -> list[dict]:
                 f"Site one additional can at {building}, or relocate an under-used unit "
                 "from a quieter building before buying hardware."
             ),
+            exempt_from_materiality=True,
             confidence="high" if len(rows) >= 3 else "low",
             window_days=days,
             basis=(
@@ -447,6 +676,7 @@ def retime_collections(context: dict) -> list[dict]:
                 f"{' and others' if len(buildings) > 3 else ''}, and drop these cans from "
                 "the fixed morning sweep."
             ),
+            exempt_from_materiality=True,
             confidence="high" if len(entries) >= MIN_ROUTE_CANS * 2 else "medium",
             window_days=activity["window_days"],
             basis=(
@@ -540,6 +770,15 @@ def reduce_food_portions(context: dict) -> list[dict]:
 
         annual_cost = _annualise(cost, days)
         worst = max(items, key=lambda item: item["cost"])
+        grams = sum(item["grams"] for item in items)
+        # Food is the heaviest line in the emission table by a distance: its
+        # footprint is the farming, water and transport behind it, almost all
+        # of which is spent before it reaches the tray. Pricing it only at
+        # the purchase cost understates it badly.
+        annual_co2e = (
+            _annualise(grams, days) / 1000.0
+            * impact.EMBODIED_CO2E_BY_SUBTYPE["edible food"]
+        )
 
         out.append(recommendation(
             key=f"portions:{building}",
@@ -557,6 +796,7 @@ def reduce_food_portions(context: dict) -> list[dict]:
                 "two weeks."
             ),
             annual_saving=annual_cost,
+            annual_co2e_kg=annual_co2e,
             confidence="high" if count >= MIN_OBSERVATIONS * 3 else "medium",
             window_days=days,
             basis=(
@@ -573,6 +813,8 @@ def reduce_food_portions(context: dict) -> list[dict]:
                 metric("Catalog value", _money(cost), "what the food cost to buy"),
                 metric("Projected annual value", _money(annual_cost),
                        "straight-line from the window"),
+                metric("Upstream carbon", impact.describe_co2e(annual_co2e),
+                       "farming and transport behind food never eaten"),
                 table(
                     "What is being left",
                     ["item", "servings", "value", "est. mass"],
@@ -604,7 +846,7 @@ def fix_misrouting(context: dict) -> list[dict]:
     out = []
     for (logged_as, should_be), items in grouped.items():
         count = sum(item["count"] for item in items)
-        if count < MIN_OBSERVATIONS:
+        if count < MIN_MISROUTE_ITEMS:
             continue
         mass_grams = sum(item["grams"] for item in items)
 
@@ -623,6 +865,10 @@ def fix_misrouting(context: dict) -> list[dict]:
             ),
             confidence="high",
             window_days=days,
+            exempt_from_materiality=True,
+            annual_landfill_kg=(
+                _annualise(mass_grams, days) / 1000.0 if logged_as == "landfill" else None
+            ),
             basis=(
                 "Compares the stream each item was logged into against the stream its "
                 "catalog entry declares. Only items matched to the catalog can be checked, "
@@ -693,6 +939,7 @@ def service_backlog(context: dict) -> list[dict]:
                 else ", then review the interval between rounds rather than the route itself."
             )
         ),
+        exempt_from_materiality=True,
         confidence="high",
         window_days=days,
         basis=(
@@ -721,19 +968,181 @@ def service_backlog(context: dict) -> list[dict]:
     )]
 
 
+
+def rebalance_within_building(context: dict) -> list[dict]:
+    """One can full while its neighbours sit empty.
+
+    This is the placement signal, and it is a different problem from not
+    having enough bins: the capacity is already in the building, in the
+    wrong place or without a sightline. Adding hardware here would leave the
+    new can as empty as the existing quiet ones.
+    """
+    by_building: dict[str, list[dict]] = {}
+    for can in context["fleet"]:
+        if can["fill_percent"] is not None:
+            by_building.setdefault(can["building_name"], []).append(can)
+
+    out = []
+    for building, cans in by_building.items():
+        if len(cans) < 2:
+            continue
+        fills = [can["fill_percent"] for can in cans]
+        spread = max(fills) - min(fills)
+        if spread < FILL_SPREAD_POINTS:
+            continue
+
+        busiest = max(cans, key=lambda can: can["fill_percent"])
+        quietest = min(cans, key=lambda can: can["fill_percent"])
+
+        out.append(recommendation(
+            key=f"rebalance:{building}",
+            kind="placement",
+            title=f"Re-site the quiet bins at {building}",
+            summary=(
+                f"{busiest['can_code']} is at {busiest['fill_percent']:.0f}% while "
+                f"{quietest['can_code']}, in the same building, is at "
+                f"{quietest['fill_percent']:.0f}% -- a {spread:.0f} point spread. The "
+                "capacity is already here; it is in the wrong place."
+            ),
+            action=(
+                f"Move {quietest['can_code']} ({quietest['placement_note'] or 'current spot'}) "
+                f"onto the traffic that is filling {busiest['can_code']} "
+                f"({busiest['placement_note'] or 'current spot'}), or add wayfinding so the "
+                "quieter bin is visible from it."
+            ),
+            exempt_from_materiality=True,
+            confidence="high" if spread >= 70 else "medium",
+            window_days=context["days"],
+            basis=(
+                "Latest fill reading for every active can, grouped by building. Fill is "
+                "counted from disposals for a reporting unit and carried from a seeded "
+                "reading for a simulated one."
+            ),
+            caveat=(
+                "Fill is counted in items, not volume -- there are no weight sensors -- so "
+                "a bin of crisp packets and a bin of bottles read alike. Walking distance "
+                "between these cans is not modelled."
+            ),
+            evidence=[
+                metric("Fill spread", f"{spread:.0f} points",
+                       f"flagged above {FILL_SPREAD_POINTS:.0f}"),
+                metric("Fullest", f"{busiest['can_code']} {busiest['fill_percent']:.0f}%",
+                       busiest["placement_note"] or "no placement note"),
+                metric("Emptiest", f"{quietest['can_code']} {quietest['fill_percent']:.0f}%",
+                       quietest["placement_note"] or "no placement note"),
+                metric("Cans in building", str(len(cans)), "all with a current reading"),
+                bars(
+                    "Fill by can",
+                    [{"bucket": can["can_code"].replace(f"VU-", ""),
+                      "value": round(can["fill_percent"]),
+                      "note": can["placement_note"]}
+                     for can in sorted(cans, key=lambda can: -can["fill_percent"])],
+                    "Every can in this building, with where it sits. A tall bar beside "
+                    "short ones is a placement problem, not a capacity one.",
+                ),
+            ],
+        ))
+
+    out.sort(key=lambda r: -float(r["evidence"][0]["value"].split()[0]))
+    return out
+
+
+def capacity_ceiling(context: dict) -> list[dict]:
+    """Cans over the service threshold that are already the largest model.
+
+    Worth separating from the general backlog because the obvious answer is
+    unavailable: there is no bigger bin to order. The remaining levers are
+    collection frequency and a second unit beside it, and saying so stops
+    somebody raising a purchase order for a size that does not exist.
+    """
+    models = {model["model_code"]: model for model in db.list_can_models()}
+    if not models:
+        return []
+    largest = max(models.values(), key=lambda model: model["capacity_items"])
+
+    maxed = [
+        can for can in context["fleet"]
+        if can["fill_percent"] is not None
+        and can["fill_percent"] >= SERVICE_PRESSURE_PERCENT
+        and can["capacity_items"] >= largest["capacity_items"]
+    ]
+    if len(maxed) < 2:
+        return []
+
+    return [recommendation(
+        key="capacity:ceiling",
+        kind="placement",
+        title=f"{_plural(len(maxed), 'can')} are full and already the largest model",
+        summary=(
+            f"{_plural(len(maxed), 'unit')} at or over "
+            f"{SERVICE_PRESSURE_PERCENT:.0f}% are {largest['model_code']}, the biggest "
+            f"model in the fleet at {largest['capacity_items']} items. There is no larger "
+            "bin to order, so the levers are frequency or a second unit."
+        ),
+        action=(
+            f"Pair each of these with a second can rather than looking for a bigger one, "
+            f"or raise their collection to twice daily. {maxed[0]['can_code']} at "
+            f"{maxed[0]['building_name']} is the fullest."
+        ),
+        exempt_from_materiality=True,
+        confidence="high",
+        window_days=context["days"],
+        basis=(
+            "Latest fill reading per can joined to its model's item capacity. Capacity is "
+            "in items because fullness is counted in items -- there are no weight sensors."
+        ),
+        caveat=(
+            "Item capacity is a nominal figure per model, not a measured volume, and a can "
+            "of bottles fills it faster than a can of wrappers."
+        ),
+        evidence=[
+            metric("Cans at the ceiling", str(len(maxed)),
+                   f"{largest['model_code']}, {largest['capacity_items']} items"),
+            metric("Largest model available", largest["model_code"],
+                   f"{largest['capacity_liters']:.0f} L / {largest['capacity_items']} items"),
+            table(
+                "Fleet model capacities",
+                ["model", "litres", "item capacity"],
+                [[model["model_code"], f"{model['capacity_liters']:.0f}",
+                  f"{model['capacity_items']:,}"]
+                 for model in sorted(models.values(),
+                                     key=lambda model: -model["capacity_items"])],
+                "Nothing above the top row exists to order.",
+            ),
+            table(
+                "Cans at the ceiling",
+                ["can", "building", "fill", "items since emptied"],
+                [[can["can_code"], can["building_name"], f"{can['fill_percent']:.0f}%",
+                  str(can["events_since_emptied"])]
+                 for can in sorted(maxed, key=lambda can: -can["fill_percent"])],
+                "Each already the largest unit TossIQ makes.",
+            ),
+        ],
+    )]
+
+
 RULES = (
-    switch_to_reusable,
+    switch_products,
     reduce_food_portions,
     add_or_relocate_cans,
+    rebalance_within_building,
+    capacity_ceiling,
     retime_collections,
     fix_misrouting,
     service_backlog,
 )
 
-KIND_ORDER = {"procurement": 0, "food": 1, "operations": 2, "placement": 3, "sustainability": 4}
+KIND_ORDER = {
+    "infrastructure": 0,
+    "procurement": 1,
+    "food": 2,
+    "placement": 3,
+    "operations": 4,
+    "sustainability": 5,
+}
 
 
-def generate(days: int = 30, limit: int | None = None) -> dict:
+def generate(days: int = 30, limit: int | None = None, include_minor: bool = False) -> dict:
     """Every rule, ranked.
 
     Ranking is projected annual saving first, because that is the question
@@ -745,36 +1154,86 @@ def generate(days: int = 30, limit: int | None = None) -> dict:
     context = build_context(days)
     produced: list[dict] = []
     failures: list[str] = []
+    trimmed = 0
     for rule in RULES:
         try:
-            produced.extend(rule(context))
+            found = rule(context)
         except Exception as exc:  # one broken rule must not empty the page
             failures.append(f"{rule.__name__}: {type(exc).__name__}")
+            continue
+        # Rules return their findings already ranked, so the cap keeps the
+        # strongest of each kind rather than an arbitrary few.
+        if len(found) > MAX_PER_RULE:
+            trimmed += len(found) - MAX_PER_RULE
+            found = found[:MAX_PER_RULE]
+        produced.extend(found)
 
-    produced.sort(
+    # Materiality. A proposal has to be worth an afternoon: real money, real
+    # carbon, or a service problem that needs fixing whatever it returns.
+    # Without this the page filled with "save $13 a year on hot cups", which
+    # costs more attention to read than it returns and teaches the reader to
+    # skip the page.
+    material, immaterial = [], []
+    for item in produced:
+        if (
+            item["exempt_from_materiality"]
+            or (item["annual_saving"] or 0) >= MIN_ANNUAL_SAVING
+            or (item["annual_co2e_kg"] or 0) >= MIN_ANNUAL_CO2E_KG
+        ):
+            material.append(item)
+        else:
+            immaterial.append(item)
+
+    # Ranked by what each one is actually about: money where there is money,
+    # otherwise its kind. An environmental switch with no saving must not
+    # sink below a service note just for having a null in the money column.
+    material.sort(
         key=lambda item: (
-            -(item["annual_saving"] or 0),
             KIND_ORDER.get(item["kind"], 9),
+            -(item["annual_saving"] or 0),
+            -(item["annual_co2e_kg"] or 0),
             item["title"],
         )
     )
+    # The immaterial ones are demoted, not deleted. Somebody auditing this
+    # page should be able to see what was set aside and on what threshold,
+    # rather than wondering why a known problem is absent from it.
+    for item in immaterial:
+        item["below_threshold"] = True
+    immaterial.sort(key=lambda item: -(item["annual_saving"] or 0))
+
+    produced = material + (immaterial if include_minor else [])
     if limit:
         produced = produced[:limit]
 
     total_saving = sum(item["annual_saving"] or 0 for item in produced)
+    total_co2e = sum(item["annual_co2e_kg"] or 0 for item in produced)
+    total_landfill = sum(item["annual_landfill_kg"] or 0 for item in produced)
     return {
         "window_days": days,
         "generated": len(produced),
         "recommendations": produced,
         "projected_annual_saving": round(total_saving, 2),
+        "projected_annual_co2e_kg": round(total_co2e, 1),
+        "projected_annual_landfill_kg": round(total_landfill, 1),
+        # Reported rather than hidden: a reader should be able to see that
+        # eleven findings were set aside for being too small, and on what
+        # threshold, instead of wondering why a known problem is missing.
+        "suppressed_immaterial": 0 if include_minor else len(immaterial),
+        "trimmed_duplicates": trimmed,
         "rules_run": len(RULES),
         "rules_failed": failures,
         "assumptions": {
             "wash_cost_per_use": WASH_COST_PER_USE,
             "min_observations": MIN_OBSERVATIONS,
+            "min_annual_saving": MIN_ANNUAL_SAVING,
+            "min_annual_co2e_kg": MIN_ANNUAL_CO2E_KG,
+            "refill_station_cost": REFILL_STATION_COST,
             "can_pressure_ratio": CAN_PRESSURE_RATIO,
             "peak_concentration": PEAK_CONCENTRATION,
+            "fill_spread_points": FILL_SPREAD_POINTS,
         },
+        "impact_disclaimer": impact.DISCLAIMER,
         "note": (
             "Savings are projections from the window shown, not booked figures. Every "
             "card carries the observations it was derived from; open one before acting "

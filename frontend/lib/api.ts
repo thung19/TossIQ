@@ -543,6 +543,7 @@ export type EvidenceBars = {
 export type Evidence = EvidenceMetric | EvidenceTable | EvidenceBars;
 
 export type RecommendationKind =
+  | "infrastructure"
   | "procurement"
   | "food"
   | "operations"
@@ -561,8 +562,18 @@ export type Recommendation = {
   basis: string;
   window_days: number;
   annual_saving: number | null;
+  /** Estimated kg CO2e a year. The axis that matters for switches whose
+   * better option costs more -- a paper straw is dearer than a plastic one,
+   * so ranking on money alone would argue against it. */
+  annual_co2e_kg: number | null;
+  annual_landfill_kg: number | null;
   confidence: "high" | "medium" | "low";
   caveat: string | null;
+  /** Service-quality findings are shown whatever they return: a bin
+   * overflowing at noon is worth fixing regardless of its payback. */
+  exempt_from_materiality: boolean;
+  /** Shown only when minor items are requested. */
+  below_threshold: boolean;
 };
 
 export type RecommendationReport = {
@@ -570,15 +581,25 @@ export type RecommendationReport = {
   generated: number;
   recommendations: Recommendation[];
   projected_annual_saving: number;
+  projected_annual_co2e_kg: number;
+  projected_annual_landfill_kg: number;
+  /** Findings held back for being too small to act on. Reported rather than
+   * hidden, so a reader can see what was set aside and on what threshold. */
+  suppressed_immaterial: number;
+  /** Extra findings of a kind already represented, trimmed so one pattern
+   * cannot own the page. */
+  trimmed_duplicates: number;
   rules_run: number;
   /** Rules that threw. Surfaced rather than swallowed: a page listing nine
    * recommendations when it should list eleven is worse than one saying so. */
   rules_failed: string[];
   assumptions: Record<string, number>;
+  impact_disclaimer: string;
   note: string;
 };
 
 export const KIND_LABEL: Record<RecommendationKind, string> = {
+  infrastructure: "infrastructure",
   procurement: "purchasing",
   food: "food waste",
   operations: "operations",

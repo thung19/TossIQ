@@ -26,6 +26,8 @@ export default function RecommendationCard({
   onToggle: () => void;
 }) {
   const saving = recommendation.annual_saving;
+  const carbon = recommendation.annual_co2e_kg;
+  const landfill = recommendation.annual_landfill_kg;
 
   return (
     <article className={`card ${expanded ? "open" : ""}`}>
@@ -37,12 +39,36 @@ export default function RecommendationCard({
           <span className={`confidence ${recommendation.confidence}`}>
             {recommendation.confidence} confidence
           </span>
-          {saving != null && saving > 0 && (
-            <span className="saving">
-              ~${saving.toLocaleString(undefined, { maximumFractionDigits: 0 })}/yr
-              <span className="proj">projected</span>
+          {recommendation.below_threshold && (
+            <span className="minor" title="Below the materiality thresholds; shown because minor items are switched on">
+              minor
             </span>
           )}
+          <span className="figures">
+            {/* Carbon sits beside money rather than below it. For a material
+                switch the better option often costs more, and a card that
+                showed only dollars would make the right answer look wrong. */}
+            {carbon != null && carbon > 0 && (
+              <span className="carbon">
+                {carbon >= 1000
+                  ? `${(carbon / 1000).toFixed(1)} t`
+                  : `${carbon.toLocaleString(undefined, { maximumFractionDigits: 0 })} kg`}
+                <span className="proj">CO₂e/yr</span>
+              </span>
+            )}
+            {landfill != null && landfill > 0 && (
+              <span className="carbon">
+                {landfill.toLocaleString(undefined, { maximumFractionDigits: 0 })} kg
+                <span className="proj">from landfill</span>
+              </span>
+            )}
+            {saving != null && saving > 0 && (
+              <span className="saving">
+                ~${saving.toLocaleString(undefined, { maximumFractionDigits: 0 })}/yr
+                <span className="proj">projected</span>
+              </span>
+            )}
+          </span>
           <span className={`chevron ${expanded ? "up" : ""}`} aria-hidden>
             <svg width="11" height="11" viewBox="0 0 16 16" fill="none">
               <path
@@ -83,6 +109,16 @@ export default function RecommendationCard({
             {recommendation.caveat && (
               <p className="caveat">
                 <b>What it does not tell you.</b> {recommendation.caveat}
+              </p>
+            )}
+            {carbon != null && carbon > 0 && (
+              <p className="caveat">
+                <b>Carbon is an estimate.</b> {carbon.toLocaleString(undefined, {
+                  maximumFractionDigits: 0,
+                })}{" "}
+                kg CO₂e a year is catalog reference mass times an illustrative emission
+                factor. The factors are order-of-magnitude values, not a verified LCA
+                source, and must be replaced before any of this is reported externally.
               </p>
             )}
             {saving != null && saving > 0 && (
@@ -153,6 +189,9 @@ export default function RecommendationCard({
         .kind.sustainability {
           color: var(--cat-unknown);
         }
+        .kind.infrastructure {
+          color: var(--status-done);
+        }
         .confidence {
           font-family: ui-monospace, Menlo, monospace;
           font-size: 9.5px;
@@ -164,8 +203,14 @@ export default function RecommendationCard({
         .confidence.low {
           color: var(--status-backlog);
         }
-        .saving {
+        .figures {
           margin-left: auto;
+          display: inline-flex;
+          align-items: baseline;
+          gap: 10px;
+        }
+        .saving,
+        .carbon {
           display: inline-flex;
           align-items: baseline;
           gap: 4px;
@@ -173,6 +218,19 @@ export default function RecommendationCard({
           font-size: 13px;
           color: var(--text-primary);
           font-variant-numeric: tabular-nums;
+        }
+        .carbon {
+          color: var(--cat-compost);
+          font-size: 12px;
+        }
+        .minor {
+          font-family: ui-monospace, Menlo, monospace;
+          font-size: 9px;
+          line-height: 14px;
+          padding: 0 5px;
+          border-radius: 2px;
+          color: var(--text-dim);
+          border: 1px dashed var(--border-solid);
         }
         /* The qualifier rides with the number everywhere it appears, not
            only inside the expanded panel. */

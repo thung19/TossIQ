@@ -84,32 +84,50 @@ CATALOG_FIELDS = (
 # EXPECTED_USES is the service life one unit is rated for, and it is what
 # turns a reusable recommendation into arithmetic. A disposable is 1.
 #
-# (sku, substitute_sku, expected_uses, substitute_note)
+# (sku, substitute_sku, kind, substitute_note)
+#
+# `kind` decides which recommendation this becomes, and they are not
+# interchangeable. "material" changes a purchase order and is realistic
+# anywhere. "reuse" needs service where the item comes back, which a
+# grab-and-go counter is not. "infrastructure" removes the need to buy the
+# item at all and is where the large wins are.
 SUBSTITUTIONS = [
-    ("DISP-CUP-H12", "REU-MUG-CER12", 1,
-     "Ceramic mug programme for dine-in service; keep paper cups for takeaway."),
-    ("DISP-CUP-H16", "REU-MUG-CER12", 1,
-     "Ceramic mug programme for dine-in service; keep paper cups for takeaway."),
-    ("DISP-CUP-EPS08", "DISP-CUP-H12", 1,
-     "Foam is landfill-only and already being phased out campus-wide."),
-    ("DISP-CUT-PPF", "REU-CUT-STL", 1, "Stainless flatware for dine-in trays."),
-    ("DISP-CUT-PPS", "REU-CUT-STL", 1, "Stainless flatware for dine-in trays."),
-    ("DISP-CUT-PPK", "REU-CUT-STL", 1, "Stainless flatware for dine-in trays."),
-    ("DISP-STR-PP8", "DISP-STR-PPR", 1,
-     "Paper straw is compostable and already stocked by the same supplier."),
-    ("DISP-CLM-PET9", "DISP-CLM-FIB6", 1,
-     "Fibre clamshell is compostable; the PET one is recyclable only if clean."),
-    # Each note is read on its own under a recommendation card, so none of
-    # them may refer to a neighbouring row -- "as above" means nothing there.
-    ("BEV-WTR-0500-DAS", "REU-BTL-STL", 1,
-     "Refill stations already exist across campus; bottled water is the largest "
-     "single avoidable SKU in the catalog."),
-    ("BEV-WTR-1000-SMW", "REU-BTL-STL", 1,
-     "Premium bottled water, the most expensive per unit of the three; refill "
-     "stations already exist across campus."),
-    ("BEV-WTR-0591-VU", "REU-BTL-STL", 1,
-     "Own-brand bottled water and the highest-volume of the three; refill stations "
-     "already exist across campus."),
+    # Infrastructure: the biggest avoidable SKU on campus by a wide margin.
+    # The answer to bottled water is a tap, not handing every student a
+    # flask and hoping.
+    ("BEV-WTR-0500-DAS", "REU-BTL-STL", "infrastructure",
+     "Refill stations remove the purchase entirely. Branded premium water; "
+     "the most expensive of the three per unit."),
+    ("BEV-WTR-1000-SMW", "REU-BTL-STL", "infrastructure",
+     "Refill stations remove the purchase entirely. Premium large-format water."),
+    ("BEV-WTR-0591-VU", "REU-BTL-STL", "infrastructure",
+     "Refill stations remove the purchase entirely. Own-brand water and the "
+     "highest-volume of the three."),
+
+    # Material: a different disposable, same service. Changes the order and
+    # nothing about how the counter operates.
+    ("DISP-STR-PP8", "DISP-STR-PPR", "material",
+     "Paper straw is compostable and stocked by the same supplier."),
+    ("DISP-CLM-PET9", "DISP-CLM-FIB6", "material",
+     "Fibre clamshell is compostable and lighter; the PET one is recyclable "
+     "only when clean, which a food container rarely is."),
+    ("DISP-CUP-EPS08", "DISP-CUP-H12", "material",
+     "Foam is landfill-only. Note the paper replacement is four times the mass, "
+     "so this is a policy and recyclability change, not a carbon saving."),
+
+    # Reuse: only where service is dine-in and the item comes back on a tray.
+    ("DISP-CUT-PPF", "REU-CUT-STL", "reuse",
+     "Stainless flatware for dine-in tray service only; keep disposables for takeaway."),
+    ("DISP-CUT-PPS", "REU-CUT-STL", "reuse",
+     "Stainless flatware for dine-in tray service only; keep disposables for takeaway."),
+    ("DISP-CUT-PPK", "REU-CUT-STL", "reuse",
+     "Stainless flatware for dine-in tray service only; keep disposables for takeaway."),
+    ("DISP-CUP-H12", "REU-MUG-CER12", "reuse",
+     "Ceramic mugs for seated cafe service only. Not viable at a grab-and-go "
+     "counter, where nothing comes back."),
+    ("DISP-CUP-H16", "REU-MUG-CER12", "reuse",
+     "Ceramic mugs for seated cafe service only. Not viable at a grab-and-go "
+     "counter, where nothing comes back."),
 ]
 
 # The reusable programmes themselves. They are catalog products like any
@@ -450,13 +468,13 @@ def seed_reusable_programmes() -> int:
 def apply_substitutions() -> int:
     """Records which product replaces which, for rows that do not say yet."""
     written = 0
-    for sku, substitute_sku, expected_uses, note in SUBSTITUTIONS:
+    for sku, substitute_sku, kind, note in SUBSTITUTIONS:
         if db.product_id_for_sku(sku) is None:
             continue
         written += db.fill_null_product_columns(sku, {
             "substitute_sku": substitute_sku,
             "substitute_note": note,
-            "expected_uses": expected_uses,
+            "substitute_kind": kind,
         })
     return written
 

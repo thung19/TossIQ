@@ -75,7 +75,7 @@ def list_products() -> list[dict]:
                    detected_as, material, material_subtype, unit_cost,
                    unit_weight_grams, disposal_category, recyclable, reusable,
                    case_pack_qty, case_cost, active,
-                   substitute_sku, substitute_note, expected_uses
+                   substitute_sku, substitute_note, substitute_kind, expected_uses
             FROM products
             ORDER BY product_name
             """
@@ -337,7 +337,7 @@ def fill_null_product_columns(sku: str, columns: dict) -> int:
         "brand", "variant_label", "detected_as", "material", "material_subtype",
         "unit_cost", "unit_weight_grams", "disposal_category", "recyclable",
         "reusable", "case_pack_qty", "case_cost", "active",
-        "substitute_sku", "substitute_note", "expected_uses",
+        "substitute_sku", "substitute_note", "substitute_kind", "expected_uses",
     }
     unknown = set(columns) - allowed
     if unknown:

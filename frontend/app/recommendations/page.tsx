@@ -32,6 +32,7 @@ export default function RecommendationsPage() {
   const [days, setDays] = useState(30);
   const [kind, setKind] = useState<RecommendationKind | "all">("all");
   const [openKey, setOpenKey] = useState<string | null>(null);
+  const [includeMinor, setIncludeMinor] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -42,7 +43,7 @@ export default function RecommendationsPage() {
     const load = async () => {
       try {
         const next = await apiFetch<RecommendationReport>(
-          `/recommendations/insights?days=${days}`
+          `/recommendations/insights?days=${days}&include_minor=${includeMinor}`
         );
         if (!alive) return;
         setReport(next);
@@ -59,7 +60,7 @@ export default function RecommendationsPage() {
       alive = false;
       if (retry) clearTimeout(retry);
     };
-  }, [days]);
+  }, [days, includeMinor]);
 
   const counts = useMemo(() => {
     const tally = new Map<RecommendationKind, number>();
@@ -98,7 +99,7 @@ export default function RecommendationsPage() {
 
       <div className="page">
         <section className="kpis">
-          <StatCard label="recommendations" value={report?.generated ?? "—"} />
+          <StatCard label="shown" value={report?.generated ?? "—"} />
           <StatCard
             label="projected saving"
             value={
@@ -110,8 +111,18 @@ export default function RecommendationsPage() {
             }
             delta="per year, if acted on"
           />
+          <StatCard
+            label="carbon avoided"
+            value={
+              report
+                ? report.projected_annual_co2e_kg >= 1000
+                  ? `${(report.projected_annual_co2e_kg / 1000).toFixed(1)} t`
+                  : `${Math.round(report.projected_annual_co2e_kg)} kg`
+                : "—"
+            }
+            delta="CO₂e per year, estimated"
+          />
           <StatCard label="with money attached" value={report ? withMoney : "—"} />
-          <StatCard label="window" value={days} suffix="d" />
         </section>
 
         <section className="controls">
@@ -144,6 +155,18 @@ export default function RecommendationsPage() {
             ))}
 
           <span className="spacer" />
+          {/* The gate hides small findings by default. It does not delete
+              them, and a reader auditing the page can see what was set
+              aside rather than wondering why a known problem is missing. */}
+          <button
+            className={`chip ${includeMinor ? "on" : ""}`}
+            onClick={() => setIncludeMinor((value) => !value)}
+            title="Findings below the materiality thresholds"
+          >
+            {includeMinor
+              ? "hide minor"
+              : `show minor${report && report.suppressed_immaterial > 0 ? ` ${report.suppressed_immaterial}` : ""}`}
+          </button>
           {shown.length > 0 && (
             <button
               className="chip"
@@ -191,12 +214,42 @@ export default function RecommendationsPage() {
             <p>{report.note}</p>
             <p>
               Rules are thresholds over logged disposals, not a model. A rule stays silent
-              below{" "}
-              <b>{report.assumptions.min_observations} observations</b> rather than drawing a
-              conclusion from a handful of items. Washing a reusable is costed at{" "}
-              <b>${report.assumptions.wash_cost_per_use.toFixed(2)} per use</b> &mdash; the
-              one figure here with no source in your data, and the one to argue with first.
+              below <b>{report.assumptions.min_observations} observations</b> rather than
+              drawing a conclusion from a handful of items, and no rule contributes more
+              than three cards, so one pattern cannot own the page.
             </p>
+            <p>
+              A finding is shown when it clears{" "}
+              <b>${report.assumptions.min_annual_saving.toLocaleString()} a year</b> or{" "}
+              <b>{report.assumptions.min_annual_co2e_kg} kg CO₂e a year</b>, or when it is a
+              service problem &mdash; an overflowing bin is worth fixing whatever it
+              returns. Both thresholds are judgement calls sized for this deployment, not
+              measured quantities.
+              {report.suppressed_immaterial > 0 && (
+                <>
+                  {" "}
+                  <b>{report.suppressed_immaterial}</b> finding
+                  {report.suppressed_immaterial === 1 ? " is" : "s are"} below them right
+                  now; use &ldquo;show minor&rdquo; above to see{" "}
+                  {report.suppressed_immaterial === 1 ? "it" : "them"}.
+                </>
+              )}
+              {report.trimmed_duplicates > 0 && (
+                <>
+                  {" "}
+                  A further <b>{report.trimmed_duplicates}</b> repeat the pattern of a card
+                  already shown.
+                </>
+              )}
+            </p>
+            <p>
+              Two numbers have no source in your data and are the ones to argue with
+              first: washing a reusable at{" "}
+              <b>${report.assumptions.wash_cost_per_use.toFixed(2)} per use</b>, and a
+              refill station at{" "}
+              <b>${report.assumptions.refill_station_cost.toLocaleString()}</b> installed.
+            </p>
+            <p className="dim">{report.impact_disclaimer}</p>
           </section>
         )}
       </div>
@@ -221,7 +274,7 @@ export default function RecommendationsPage() {
         }
         .kpis {
           display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
+          grid-template-columns: repeat(5, minmax(0, 1fr));
           gap: 6px;
         }
         .controls {
@@ -314,6 +367,10 @@ export default function RecommendationsPage() {
         .footnote b {
           color: var(--text-secondary);
           font-weight: 510;
+        }
+        .footnote p.dim {
+          color: var(--text-dim);
+          font-size: 10px;
         }
         @media (max-width: 1240px) {
           .cards {
