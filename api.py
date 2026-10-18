@@ -768,7 +768,11 @@ class InitiativeIn(BaseModel):
     scope_supplier: Annotated[str, StringConstraints(max_length=255)] | None = None
     baseline_window_days: int = 30
     target_value: float
-    target_date: str | None = None
+    # Required, unlike the patch below. A goal with no deadline is
+    # permanently on track and never finished -- "cut it sometime over the
+    # next decade" is not a target, and the form should not be the only
+    # thing enforcing that.
+    target_date: str
 
 
 class InitiativePatch(BaseModel):
@@ -850,8 +854,15 @@ def create_initiative(body: InitiativeIn):
     columns = body.model_dump(exclude_none=True)
     columns.pop("target_date", None)
     target_date = _parse_date(body.target_date, "target_date")
-    if target_date:
-        columns["target_date"] = target_date
+    if target_date is None:
+        raise HTTPException(status_code=400, detail="target_date is required")
+    if target_date <= datetime.now().date():
+        raise HTTPException(
+            status_code=400,
+            detail="target_date must be in the future -- a goal already past its "
+                   "deadline cannot be worked towards.",
+        )
+    columns["target_date"] = target_date
     columns["status"] = "active"
 
     baseline = initiatives.measure({**columns, "baseline_window_days": body.baseline_window_days})

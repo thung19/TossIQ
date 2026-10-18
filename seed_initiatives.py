@@ -64,9 +64,12 @@ INITIATIVES = [
         ("factor", 0.5), 1.55, 150, 60,
     ),
     (
-        "Cut $2.5k from annual disposal cost",
-        "Catalog loss-on-discard for everything logged. Tracks the money side "
-        "of the same work the other initiatives do.",
+        # Named for the window it is actually measured over. The first
+        # version called this "annual" while measuring 30 days, which is
+        # the same confusion the whole page is trying to avoid.
+        "Cut monthly disposal cost by 40%",
+        "Catalog loss-on-discard for everything logged, measured over a rolling "
+        "30 days. Tracks the money side of the work the other goals do.",
         "facilities-ops@vanderbilt.edu",
         "cost", "reduce",
         {},
@@ -151,7 +154,7 @@ PROJECTS = [
      "dining-ops@vanderbilt.edu", "blocked", None,
      "Blocked on the compost hauler contract renewal", None, 100),
 
-    ("Cut $2.5k from annual disposal cost",
+    ("Cut monthly disposal cost by 40%",
      "Review portion sizes at Central Library cafe",
      "Plate scrapings are the largest single edible-food line.",
      "dining-ops@vanderbilt.edu", "proposed", 148.0,

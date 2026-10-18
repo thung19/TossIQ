@@ -1,6 +1,6 @@
 "use client";
 
-import { PROGRESS_LABEL, formatMetric, type Initiative } from "../../lib/api";
+import { PACE_LABEL, formatMetric, type Initiative } from "../../lib/api";
 
 /**
  * One goal, with the distance it has actually travelled.
@@ -42,8 +42,8 @@ export default function InitiativeCard({
     <article className={`card ${initiative.progress_state} ${expanded ? "open" : ""}`}>
       <button className="head" onClick={onToggle} aria-expanded={expanded}>
         <span className="top">
-          <span className={`state ${initiative.progress_state}`}>
-            {PROGRESS_LABEL[initiative.progress_state]}
+          <span className={`state pace-${initiative.pace_state}`}>
+            {PACE_LABEL[initiative.pace_state] ?? initiative.pace_state}
           </span>
           <span className="scope">{initiative.scope_label}</span>
           {initiative.status !== "active" && (
@@ -67,7 +67,10 @@ export default function InitiativeCard({
         <h3>{initiative.name}</h3>
         <p className="metric-line">
           {initiative.metric_label} &mdash; {initiative.direction === "reduce" ? "reduce" : "lift"}{" "}
-          from <b>{formatMetric(baseline, format)}</b> to <b>{formatMetric(target, format)}</b>
+          from <b>{formatMetric(baseline, format)}</b> to <b>{formatMetric(target, format)}</b>{" "}
+          {/* Every figure here is a rate. Without the period, "381 to 117"
+              reads as a running total and the goal means nothing. */}
+          <span className="per">per {initiative.baseline_window_days} days</span>
         </p>
 
         <span className="bar-wrap">
@@ -87,6 +90,33 @@ export default function InitiativeCard({
             </span>
             <span>{formatMetric(target, format)}</span>
           </span>
+        </span>
+
+        <span className="forecast">
+          {initiative.pace_state === "no_deadline" ? (
+            <span className="warn">
+              No target date. A goal with no deadline is permanently on track and never
+              finished.
+            </span>
+          ) : initiative.projected_hits_target === true ? (
+            <span className="good">
+              At this rate, hits target around <b>{initiative.projected_completion}</b>
+              {initiative.target_date && ` · due ${initiative.target_date}`}
+            </span>
+          ) : initiative.projected_hits_target === false ? (
+            <span className="bad">
+              At this rate, lands at <b>{formatMetric(initiative.projected_value, format)}</b> by{" "}
+              {initiative.target_date} &mdash; short of {formatMetric(target, format)}
+            </span>
+          ) : (
+            <span className="dim">Too early to forecast an outcome</span>
+          )}
+          {initiative.elapsed_percent != null && (
+            <span className="dim">
+              {initiative.progress_percent?.toFixed(0)}% done ·{" "}
+              {initiative.elapsed_percent.toFixed(0)}% of the time gone
+            </span>
+          )}
         </span>
 
         <span className="foot">
@@ -131,6 +161,11 @@ export default function InitiativeCard({
                 format
               )}
               hint={initiative.direction === "reduce" ? "further reduction" : "further gain"}
+            />
+            <Fact
+              label="Measured over"
+              value={`${initiative.baseline_window_days} days`}
+              hint="a rolling window, so every figure is a rate"
             />
             <Fact label="Owner" value={initiative.owner ?? "unassigned"} />
             <Fact
@@ -238,20 +273,23 @@ export default function InitiativeCard({
           border: 1px solid currentColor;
           color: var(--text-muted);
         }
-        .state.achieved {
+        .state.pace-achieved,
+        .state.pace-ahead {
           color: var(--status-done);
         }
-        .state.near_target {
+        .state.pace-on_track {
           color: var(--cat-recycling);
         }
-        .state.in_progress {
-          color: var(--primary);
-        }
-        .state.off_track {
+        .state.pace-behind {
           color: var(--status-in-progress);
         }
-        .state.regressing {
+        .state.pace-at_risk,
+        .state.pace-regressing {
           color: var(--status-bug);
+        }
+        .state.pace-no_deadline {
+          color: var(--status-in-progress);
+          border-style: dashed;
         }
         .scope,
         .due,
@@ -286,6 +324,30 @@ export default function InitiativeCard({
           color: var(--text-secondary);
           font-weight: 510;
           font-variant-numeric: tabular-nums;
+        }
+        .per {
+          color: var(--text-dim);
+          font-size: 10.5px;
+        }
+        .forecast {
+          display: flex;
+          flex-direction: column;
+          gap: 1px;
+          font-family: ui-monospace, Menlo, monospace;
+          font-size: 10px;
+          line-height: 14px;
+        }
+        .forecast .good {
+          color: var(--status-done);
+        }
+        .forecast .bad {
+          color: var(--status-bug);
+        }
+        .forecast .warn {
+          color: var(--status-in-progress);
+        }
+        .forecast b {
+          font-weight: 510;
         }
         .bar-wrap {
           display: flex;

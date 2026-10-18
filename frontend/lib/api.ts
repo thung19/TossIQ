@@ -821,6 +821,26 @@ export type Initiative = {
    * on it. Rates and safety metrics are never flagged. */
   is_material: boolean;
   materiality_note: string | null;
+  /** Progress against the clock, not just against the target. "33% of the
+   * way" says nothing alone: 33% with most of the year left is fine, 33%
+   * with a fortnight to go is a goal about to be missed, and a goal with
+   * no deadline is permanently on track and never finished. */
+  pace_state:
+    | "ahead"
+    | "on_track"
+    | "behind"
+    | "at_risk"
+    | "regressing"
+    | "achieved"
+    | "too_early"
+    | "no_deadline"
+    | "unmeasured";
+  elapsed_percent: number | null;
+  /** Set when on pace: when the current rate would reach the target. */
+  projected_completion: string | null;
+  /** Set when off pace: where the target date would actually find you. */
+  projected_value: number | null;
+  projected_hits_target: boolean | null;
   projects: Project[];
 };
 
@@ -835,9 +855,28 @@ export type InitiativeReport = {
   unbacked: { initiative_id: number; name: string }[];
   overdue: { initiative_id: number; name: string; days_overdue: number }[];
   immaterial: { initiative_id: number; name: string; note: string | null }[];
+  undated: { initiative_id: number; name: string }[];
+  behind_pace: {
+    initiative_id: number;
+    name: string;
+    pace_state: string;
+    projected_value: number | null;
+  }[];
   materiality_floor: Record<string, number>;
   metrics: Record<string, MetricSpec>;
   note: string;
+};
+
+export const PACE_LABEL: Record<string, string> = {
+  ahead: "ahead of pace",
+  on_track: "on pace",
+  behind: "behind pace",
+  at_risk: "at risk",
+  regressing: "losing ground",
+  achieved: "achieved",
+  too_early: "too early to say",
+  no_deadline: "no deadline set",
+  unmeasured: "not measurable",
 };
 
 export const PROGRESS_LABEL: Record<ProgressState, string> = {

@@ -21,7 +21,7 @@ zero: "no progress" and "actively losing ground" are different facts and the
 second one is the one worth knowing.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import analytics
 import db
@@ -333,6 +333,136 @@ def days_remaining(target_date: str | None, now: datetime | None = None) -> int 
     return (target.date() - now.date()).days
 
 
+# How far pace can drift from even before the goal is in trouble. A target
+# is not a straight line in practice -- work lands in lumps -- so the band
+# is wide enough that one slow fortnight is not an alarm.
+PACE_AHEAD = 1.15
+PACE_ON_TRACK = 0.85
+PACE_BEHIND = 0.5
+
+
+def pace(initiative: dict, percent: float | None, now: datetime | None = None) -> dict:
+    """Progress against the clock, not just against the target.
+
+    This is the half that was missing. "33% of the way" says nothing on its
+    own: 33% with most of the year left is fine, 33% with a fortnight to go
+    is a goal about to be missed, and a goal with no deadline at all is the
+    "cut it sometime over the next decade" problem -- technically always on
+    track, never actually finished.
+
+    `projected_value` extrapolates the rate of change so far out to the
+    target date. It is a straight line, which real programmes are not, so
+    it is labelled a projection and gets its own caveat on the card. Its
+    job is to answer "if nothing changes, where do we land", which is the
+    question a quarterly review actually asks.
+    """
+    now = now or datetime.now()
+    captured = initiative.get("baseline_captured_at")
+    target_date = initiative.get("target_date")
+
+    if not target_date:
+        return {
+            "pace_state": "no_deadline",
+            "elapsed_percent": None,
+            "projected_completion": None,
+            "projected_value": None,
+            "projected_hits_target": None,
+        }
+    if percent is None or not captured:
+        return {
+            "pace_state": "unmeasured",
+            "elapsed_percent": None,
+            "projected_completion": None,
+            "projected_value": None,
+            "projected_hits_target": None,
+        }
+
+    start = datetime.strptime(captured[:10], "%Y-%m-%d")
+    end = datetime.strptime(target_date, "%Y-%m-%d")
+    total_days = (end - start).days
+    gone_days = (now - start).days
+
+    if total_days <= 0:
+        return {
+            "pace_state": "unmeasured",
+            "elapsed_percent": None,
+            "projected_completion": None,
+            "projected_value": None,
+            "projected_hits_target": None,
+        }
+
+    elapsed = max(0.0, min(1.0, gone_days / total_days))
+    baseline = initiative.get("baseline_value")
+    target = initiative.get("target_value")
+    reduce = initiative.get("direction", "reduce") == "reduce"
+
+    # Two different forecasts, because a goal ahead of pace and a goal
+    # behind it are asking different questions.
+    #
+    # Ahead: "when do we get there". Extrapolating the VALUE instead gave
+    # "lands at -58 bottles a month" -- arithmetic with no model of the
+    # world behind it, because a straight line run five times past the
+    # observed window goes wherever the algebra takes it.
+    #
+    # Behind: "where do we actually end up on the day", which is the number
+    # that belongs in a review, clamped to what the quantity can physically
+    # be.
+    projected = None
+    hits = None
+    eta = None
+    if baseline is not None and elapsed > 0.02 and gone_days > 0:
+        remaining_journey = 1.0 - (percent / 100.0)
+        rate_per_day = (percent / 100.0) / gone_days
+
+        if rate_per_day > 0 and remaining_journey > 0:
+            days_to_target = remaining_journey / rate_per_day
+            arrival = now + timedelta(days=days_to_target)
+            eta = arrival.strftime("%Y-%m-%d")
+            hits = arrival.date() <= end.date()
+        elif remaining_journey <= 0:
+            eta = now.strftime("%Y-%m-%d")
+            hits = True
+        else:
+            hits = False
+
+        if not hits:
+            travelled = (percent / 100.0) * (target - baseline)
+            raw = baseline + travelled / elapsed
+            fmt = METRICS.get(initiative.get("metric"), {}).get("format", "count")
+            raw = max(0.0, raw)
+            if fmt == "percent":
+                raw = min(100.0, raw)
+            projected = round(raw, 2)
+
+    if percent < 0:
+        state = "regressing"
+    elif (reduce and percent >= 100) or (not reduce and percent >= 100):
+        state = "achieved"
+    elif elapsed < 0.02:
+        # Too early to judge. Calling a week-old goal "behind" is noise.
+        state = "too_early"
+    else:
+        ratio = (percent / 100.0) / elapsed
+        if ratio >= PACE_AHEAD:
+            state = "ahead"
+        elif ratio >= PACE_ON_TRACK:
+            state = "on_track"
+        elif ratio >= PACE_BEHIND:
+            state = "behind"
+        else:
+            state = "at_risk"
+
+    return {
+        "pace_state": state,
+        "elapsed_percent": round(elapsed * 100, 1),
+        # Only one of these is ever set. On pace, the useful fact is the
+        # arrival date; off pace, it is where the day finds you.
+        "projected_completion": eta,
+        "projected_value": projected,
+        "projected_hits_target": hits,
+    }
+
+
 def resolve(initiative: dict, projects: list[dict], building_names: dict[int, str],
             now: datetime | None = None) -> dict:
     """Decorates one stored initiative with its live measurement, progress
@@ -356,9 +486,11 @@ def resolve(initiative: dict, projects: list[dict], building_names: dict[int, st
     )
 
     size = materiality(initiative.get("metric"), initiative.get("baseline_value"))
+    clock = pace(initiative, advance["percent"], now=now)
 
     return {
         **initiative,
+        **clock,
         "is_material": size["is_material"],
         "materiality_note": size["note"],
         "metric_label": spec.get("label", initiative.get("metric")),
@@ -405,6 +537,13 @@ def list_resolved(status: str | None = None, now: datetime | None = None) -> dic
 
     unbacked = [item for item in resolved
                 if item["status"] == "active" and item["project_count"] == 0]
+    # A goal with no date is the "cut it sometime over the next decade"
+    # problem: permanently on track and never finished.
+    undated = [item for item in resolved
+               if item["status"] == "active" and not item.get("target_date")]
+    behind = [item for item in resolved
+              if item["status"] == "active"
+              and item["pace_state"] in ("behind", "at_risk", "regressing")]
     immaterial = [item for item in resolved
                   if item["status"] == "active" and not item["is_material"]]
     overdue = [
@@ -430,6 +569,16 @@ def list_resolved(status: str | None = None, now: datetime | None = None) -> dic
              "days_overdue": -item["days_remaining"]}
             for item in overdue
         ],
+        "undated": [
+            {"initiative_id": item["initiative_id"], "name": item["name"]}
+            for item in undated
+        ],
+        "behind_pace": [
+            {"initiative_id": item["initiative_id"], "name": item["name"],
+             "pace_state": item["pace_state"],
+             "projected_value": item["projected_value"]}
+            for item in behind
+        ],
         "immaterial": [
             {"initiative_id": item["initiative_id"], "name": item["name"],
              "note": item["materiality_note"]}
@@ -441,9 +590,12 @@ def list_resolved(status: str | None = None, now: datetime | None = None) -> dic
             for key, spec in METRICS.items()
         },
         "note": (
-            "Progress is measured from logged disposals every time this page loads, "
-            "over each goal's own scope and window. Baselines are frozen at creation; "
-            "project impact is what the work claims it will contribute and is never "
-            "added to measured progress."
+            "Every figure is a RATE, measured over each goal's own window -- "
+            "\"381 items\" means 381 per 30 days, not 381 ever. Progress is "
+            "recomputed from logged disposals on every load; baselines are frozen "
+            "at creation. Pace compares how far you have come against how much of "
+            "the time has gone, and the projection extrapolates the rate so far in "
+            "a straight line, which real programmes are not. Project impact is what "
+            "the work claims and is never added to the measured figure."
         ),
     }

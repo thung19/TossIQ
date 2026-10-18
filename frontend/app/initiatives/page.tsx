@@ -41,6 +41,7 @@ const DEFAULT_FORM = {
   scope_object: "",
   target_value: "",
   target_date: "",
+  baseline_window_days: "30",
 };
 
 export default function InitiativesPage() {
@@ -111,7 +112,9 @@ export default function InitiativesPage() {
   };
 
   const submit = useCallback(async () => {
-    if (!form.name.trim() || !form.target_value) return;
+    // A deadline is required, not optional: an open-ended goal is the
+    // "cut it sometime over the next decade" problem.
+    if (!form.name.trim() || !form.target_value || !form.target_date) return;
     setBusy(true);
     setError(null);
     try {
@@ -126,7 +129,8 @@ export default function InitiativesPage() {
         scope_material: form.scope_material || null,
         scope_object: form.scope_object || null,
         target_value: Number(form.target_value),
-        target_date: form.target_date || null,
+        target_date: form.target_date,
+        baseline_window_days: Number(form.baseline_window_days),
       });
       setForm({ ...DEFAULT_FORM });
       setCreating(false);
@@ -190,7 +194,11 @@ export default function InitiativesPage() {
             value={report?.unbacked.length ?? "—"}
             delta="goals with no work behind them"
           />
-          <StatCard label="overdue" value={report?.overdue.length ?? "—"} />
+          <StatCard
+            label="behind pace"
+            value={report?.behind_pace.length ?? "—"}
+            delta="won't land on current rate"
+          />
         </section>
 
         <section className="controls">
@@ -251,12 +259,25 @@ export default function InitiativesPage() {
                 />
               </label>
               <label>
-                <span>By when</span>
+                <span>By when (required)</span>
                 <input
                   type="date"
                   value={form.target_date}
                   onChange={(e) => setForm({ ...form, target_date: e.target.value })}
                 />
+              </label>
+              <label>
+                <span>Measured over</span>
+                <select
+                  value={form.baseline_window_days}
+                  onChange={(e) =>
+                    setForm({ ...form, baseline_window_days: e.target.value })
+                  }
+                >
+                  <option value="7">a rolling 7 days</option>
+                  <option value="30">a rolling 30 days</option>
+                  <option value="90">a rolling 90 days</option>
+                </select>
               </label>
 
               <label>
@@ -324,17 +345,30 @@ export default function InitiativesPage() {
               you pick turns out to produce almost nothing, the goal is flagged rather than
               shown as a tidy percentage &mdash; a target that noise can hit is not a target.
             </p>
+            <p className="help dim">
+              Every figure is a rate over the window you choose: a target of 120 means 120 per
+              30 days, not 120 ever. The deadline is required, because without one a goal is
+              permanently on track and never finished.
+            </p>
 
             <div className="form-actions">
               <button
                 className="chip primary"
                 onClick={submit}
-                disabled={busy || !form.name.trim() || !form.target_value}
+                disabled={busy || !form.name.trim() || !form.target_value || !form.target_date}
               >
                 {busy ? "measuring baseline…" : "create goal"}
               </button>
             </div>
           </section>
+        )}
+
+        {report && report.undated.length > 0 && (
+          <p className="nudge">
+            {report.undated.length} goal{report.undated.length === 1 ? " has" : "s have"} no
+            target date: {report.undated.map((item) => item.name).join(", ")}. Without a
+            deadline a goal is permanently on track and never finished.
+          </p>
         )}
 
         {report && report.immaterial.length > 0 && (

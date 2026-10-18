@@ -310,5 +310,117 @@ class FoodWasteMetricTests(unittest.TestCase):
         self.assertIn("peels", help_text)
 
 
+class PaceTests(unittest.TestCase):
+    """The half that was missing. "33% of the way" says nothing on its own:
+    33% with most of the year left is fine, 33% with a fortnight to go is a
+    goal about to be missed."""
+
+    def dated(self, captured: str, target: str, **overrides) -> dict:
+        return goal(baseline_captured_at=captured, target_date=target, **overrides)
+
+    def test_progress_matching_time_elapsed_is_on_pace(self):
+        # Half the time gone, half the journey done.
+        result = initiatives.pace(
+            self.dated("2026-08-20 00:00:00", "2026-12-19"), 50.0, now=NOW
+        )
+        self.assertEqual(result["pace_state"], "on_track")
+
+    def test_running_ahead_of_the_clock_is_ahead(self):
+        result = initiatives.pace(
+            self.dated("2026-09-19 00:00:00", "2027-01-17"), 60.0, now=NOW
+        )
+        self.assertEqual(result["pace_state"], "ahead")
+
+    def test_running_behind_the_clock_is_flagged(self):
+        result = initiatives.pace(
+            self.dated("2026-07-21 00:00:00", "2026-11-19"), 30.0, now=NOW
+        )
+        self.assertIn(result["pace_state"], ("behind", "at_risk"))
+
+    def test_a_goal_with_no_deadline_is_called_out(self):
+        """Permanently on track and never finished -- the "cut it sometime
+        over the next decade" problem."""
+        result = initiatives.pace(goal(target_date=None), 50.0, now=NOW)
+        self.assertEqual(result["pace_state"], "no_deadline")
+        self.assertIsNone(result["projected_completion"])
+
+    def test_a_brand_new_goal_is_not_judged(self):
+        """Calling a week-old goal "behind" is noise."""
+        result = initiatives.pace(
+            self.dated("2026-10-18 00:00:00", "2027-10-18"), 0.0, now=NOW
+        )
+        self.assertEqual(result["pace_state"], "too_early")
+
+    def test_going_backwards_beats_every_other_verdict(self):
+        result = initiatives.pace(
+            self.dated("2026-08-20 00:00:00", "2026-12-19"), -15.0, now=NOW
+        )
+        self.assertEqual(result["pace_state"], "regressing")
+
+    def test_on_pace_forecasts_an_arrival_date_not_a_value(self):
+        """Extrapolating the value gave "lands at -58 bottles a month" --
+        arithmetic with no model of the world behind it."""
+        result = initiatives.pace(
+            self.dated("2026-09-19 00:00:00", "2027-03-19"), 50.0, now=NOW
+        )
+        self.assertIsNotNone(result["projected_completion"])
+        self.assertIsNone(result["projected_value"])
+        self.assertTrue(result["projected_hits_target"])
+
+    def test_off_pace_forecasts_where_the_deadline_finds_you(self):
+        result = initiatives.pace(
+            self.dated("2026-07-21 00:00:00", "2026-11-19"), 20.0, now=NOW
+        )
+        self.assertFalse(result["projected_hits_target"])
+        self.assertIsNotNone(result["projected_value"])
+
+    def test_a_projected_value_never_goes_below_zero(self):
+        """A count, a cost and a mass all bottom out at zero whatever the
+        algebra says."""
+        result = initiatives.pace(
+            self.dated("2026-10-05 00:00:00", "2028-10-05"), 60.0, now=NOW
+        )
+        if result["projected_value"] is not None:
+            self.assertGreaterEqual(result["projected_value"], 0.0)
+
+    def test_a_projected_rate_stays_inside_a_hundred_percent(self):
+        rate = self.dated("2026-07-21 00:00:00", "2026-11-19",
+                          metric="diversion_rate", direction="increase",
+                          baseline_value=57.0, target_value=75.0)
+        result = initiatives.pace(rate, 20.0, now=NOW)
+        if result["projected_value"] is not None:
+            self.assertLessEqual(result["projected_value"], 100.0)
+
+    def test_elapsed_is_reported_so_the_reader_can_judge_for_themselves(self):
+        result = initiatives.pace(
+            self.dated("2026-08-20 00:00:00", "2026-12-19"), 50.0, now=NOW
+        )
+        self.assertAlmostEqual(result["elapsed_percent"], 50.0, delta=2.0)
+
+
+class HorizonRollupTests(unittest.TestCase):
+    def listing(self, rows):
+        with mock.patch.object(initiatives.db, "list_initiatives", return_value=list(rows)), \
+             mock.patch.object(initiatives.db, "list_projects", return_value=[]), \
+             mock.patch.object(initiatives.db, "list_buildings", return_value=[]), \
+             mock.patch.object(initiatives, "measure", return_value=70.0):
+            return initiatives.list_resolved(now=NOW)
+
+    def test_undated_goals_are_collected_for_the_nudge(self):
+        result = self.listing([goal(target_date=None)])
+        self.assertEqual(len(result["undated"]), 1)
+
+    def test_goals_that_will_not_land_are_collected(self):
+        result = self.listing([
+            goal(initiative_id=1, baseline_captured_at="2026-07-21 00:00:00",
+                 target_date="2026-11-19", baseline_value=100.0, target_value=10.0),
+        ])
+        self.assertEqual(len(result["behind_pace"]), 1)
+
+    def test_the_note_explains_that_figures_are_rates(self):
+        """Without the period, "381 items" reads as a running total."""
+        self.assertIn("per 30 days", self.listing([])["note"])
+
+
 if __name__ == "__main__":
     unittest.main()
