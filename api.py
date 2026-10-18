@@ -32,6 +32,7 @@ import uuid
 
 from contextlib import asynccontextmanager
 from datetime import datetime
+from typing import Annotated
 
 import asyncio
 import time
@@ -41,7 +42,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, UnidentifiedImageError
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, StringConstraints
 
 import asku
 import db
@@ -121,8 +122,10 @@ class SortResponse(BaseModel):
 
 
 class AskuRequest(BaseModel):
-    question: str = Field(..., min_length=1, max_length=2000)
-    days: int = Field(asku.DEFAULT_WINDOW_DAYS, ge=1, le=365)
+    question: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=2000),
+    ]
 
 
 class AskuObservationSection(BaseModel):
@@ -458,11 +461,12 @@ def ask_asku(request: AskuRequest):
 
     The response carries the observation sections the answer was grounded
     in, so the dashboard can show the operator the basis for it. An OCI
-    (database or Generative AI) failure arrives here as an asku.AskuError
-    and is reported as one renderable message rather than a stack trace.
+    (database or Generative AI) failure arrives here as an asku.AskuError,
+    whose message is a fixed string; the underlying exception stays in the
+    log rather than being disclosed to the caller.
     """
     try:
-        return asku.answer_question(request.question, days=request.days)
+        return asku.answer_question(request.question)
     except asku.AskuError as e:
         raise HTTPException(status_code=502, detail=str(e))
 

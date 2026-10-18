@@ -5,19 +5,15 @@ import PageHeader from "../components/PageHeader";
 import AskuGrounding from "../components/AskuGrounding";
 import { apiPost, type AskuAnswer } from "../../lib/api";
 
-const WINDOW_OPTIONS = [7, 30, 90];
-
 type Turn = {
   id: number;
   question: string;
-  windowDays: number;
   answer: AskuAnswer | null;
   error: string | null;
 };
 
 export default function AskuPage() {
   const [question, setQuestion] = useState("");
-  const [windowDays, setWindowDays] = useState(30);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [pending, setPending] = useState(false);
   const nextId = useRef(1);
@@ -27,12 +23,11 @@ export default function AskuPage() {
     if (!trimmed || pending) return;
 
     const id = nextId.current++;
-    const days = windowDays;
-    setTurns((prev) => [...prev, { id, question: trimmed, windowDays: days, answer: null, error: null }]);
+    setTurns((prev) => [...prev, { id, question: trimmed, answer: null, error: null }]);
     setQuestion("");
     setPending(true);
     try {
-      const answer = await apiPost<AskuAnswer>("/asku", { question: trimmed, days });
+      const answer = await apiPost<AskuAnswer>("/asku", { question: trimmed });
       setTurns((prev) => prev.map((t) => (t.id === id ? { ...t, answer } : t)));
     } catch (e) {
       const message = e instanceof Error ? e.message : "Request failed";
@@ -65,6 +60,11 @@ export default function AskuPage() {
           read from the recorded disposal events and product catalog shown under each answer; the
           assistant says so plainly when the data does not cover a question.
         </p>
+        <p className="preamble">
+          Each question is answered on its own. Earlier questions and answers below are a log,
+          not a conversation: nothing from them is sent with the next question, so name what you
+          mean rather than referring back to &ldquo;that bin&rdquo; or &ldquo;it&rdquo;.
+        </p>
 
         <section className="transcript">
           {turns.length === 0 && (
@@ -78,7 +78,6 @@ export default function AskuPage() {
               <div className="q">
                 <span className="q-mark">?</span>
                 <span className="q-text">{turn.question}</span>
-                <span className="q-window">last {turn.windowDays}d</span>
               </div>
 
               {turn.answer && (
@@ -109,16 +108,7 @@ export default function AskuPage() {
             disabled={pending}
           />
           <div className="composer-row">
-            <label className="window">
-              <span>window</span>
-              <select value={windowDays} onChange={(e) => setWindowDays(Number(e.target.value))}>
-                {WINDOW_OPTIONS.map((d) => (
-                  <option key={d} value={d}>
-                    last {d} days
-                  </option>
-                ))}
-              </select>
-            </label>
+            <span className="composer-note">answered independently of earlier questions</span>
             <button type="button" className="ask" onClick={() => ask(question)} disabled={pending || !question.trim()}>
               {pending ? "asking…" : "ask"}
             </button>
@@ -169,7 +159,7 @@ export default function AskuPage() {
         }
         .q {
           display: grid;
-          grid-template-columns: 12px minmax(0, 1fr) auto;
+          grid-template-columns: 12px minmax(0, 1fr);
           align-items: baseline;
           column-gap: 8px;
         }
@@ -184,12 +174,6 @@ export default function AskuPage() {
           color: var(--text-primary);
           line-height: 20px;
           overflow-wrap: anywhere;
-        }
-        .q-window {
-          font-family: ui-monospace, Menlo, monospace;
-          font-size: 10.5px;
-          color: var(--text-dim);
-          white-space: nowrap;
         }
         .a {
           display: flex;
@@ -242,21 +226,10 @@ export default function AskuPage() {
           justify-content: space-between;
           gap: 10px;
         }
-        .window {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
+        .composer-note {
           font-family: ui-monospace, Menlo, monospace;
-          font-size: 11px;
+          font-size: 10.5px;
           color: var(--text-dim);
-        }
-        .window select {
-          color: var(--text-secondary);
-          background: var(--bg-elevated);
-          border: 1px solid var(--border-08);
-          border-radius: 3px;
-          padding: 2px 4px;
-          font-size: 11px;
         }
         .ask {
           font-family: ui-monospace, Menlo, monospace;
