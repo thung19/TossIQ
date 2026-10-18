@@ -127,7 +127,7 @@ export default function CampusMapPage() {
         right={
           <span className="header-meta">
             <span>{cans.length} cans shown</span>
-            {summary && (
+            {summary && summary.total === cans.length && (
               <span className="dim">
                 · {summary.observed} live · {summary.simulated} simulated
               </span>

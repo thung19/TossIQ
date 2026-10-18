@@ -2,8 +2,6 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
-import { apiFetch, type Building } from "../../lib/api";
 
 type NavItem = {
   href: string;
@@ -63,11 +61,6 @@ const Icon = {
       <circle cx="8" cy="6.6" r="1.5" stroke="currentColor" strokeWidth="1.1" />
     </svg>
   ),
-  dot: (color: string, filled = true) => (
-    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <circle cx="8" cy="8" r="4" stroke={color} strokeWidth="1.2" fill={filled ? color : "none"} />
-    </svg>
-  ),
 };
 
 const PRIMARY: NavItem[] = [
@@ -87,25 +80,6 @@ export default function Sidebar({
   lastInferenceMs: number | null;
 }) {
   const pathname = usePathname();
-  // The buildings a can fleet is actually installed in, rather than an
-  // invented favorites list. Fetched once rather than polled: a building is
-  // added far less often than a can changes status.
-  const [buildings, setBuildings] = useState<Building[]>([]);
-
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const rows = await apiFetch<Building[]>("/buildings");
-        if (alive) setBuildings(rows.filter((b) => b.can_count > 0).slice(0, 6));
-      } catch {
-        /* backend may be booting; the list simply stays empty */
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, []);
 
   return (
     <aside className="sidebar">
@@ -140,21 +114,6 @@ export default function Sidebar({
           <span className="nav-icon">{Icon.sq}</span>
           <span className="nav-label">Projects</span>
         </div>
-      </nav>
-
-      <div className="group-label">buildings</div>
-      <nav className="nav-group">
-        {buildings.length === 0 && <div className="nav-row static empty">no buildings registered</div>}
-        {buildings.map((building) => (
-          <div key={building.building_id} className="nav-row static" title={building.campus_area ?? undefined}>
-            <span className="rail" />
-            <span className="nav-icon">
-              {Icon.dot(building.can_count > 0 ? "var(--status-done)" : "var(--text-dim)", building.can_count > 0)}
-            </span>
-            <span className="nav-label">{building.name}</span>
-            <span className="nav-count">{building.can_count}</span>
-          </div>
-        ))}
       </nav>
 
       <div className="sidebar-footer">
@@ -208,7 +167,7 @@ export default function Sidebar({
         .nav-row {
           position: relative;
           display: grid;
-          grid-template-columns: 2px 16px 1fr auto;
+          grid-template-columns: 2px 16px 1fr;
           align-items: center;
           column-gap: 10px;
           padding: 5px 12px 5px 0;
@@ -257,19 +216,6 @@ export default function Sidebar({
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
-        }
-        .nav-count {
-          font-family: ui-monospace, Menlo, monospace;
-          font-size: 10px;
-          color: var(--text-dim);
-          font-variant-numeric: tabular-nums;
-          padding-right: 2px;
-        }
-        .nav-row.empty {
-          grid-template-columns: 2px 1fr;
-          font-size: 11px;
-          color: var(--text-dim);
-          padding-left: 0;
         }
         .group-label {
           font-family: ui-monospace, Menlo, monospace;
