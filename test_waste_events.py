@@ -1,9 +1,11 @@
 """Tests for the can a disposal event is attributed to.
 
 WASTE_EVENTS.BIN_ID is what makes a can's observed fill countable, so "the
-insert resolves a can" is the property the campus map depends on. db.py opens
-its own connection per call, so these tests stand a fake connection in its
-place (plain stdlib unittest.mock, no live OCI connection, same style as
+insert attributes an event to the right can, and to no can at all when it
+cannot tell" is the property the campus map depends on -- a false attribution
+is worse than none, because it reads as observed. db.py opens its own
+connection per call, so these tests stand a fake connection in its place
+(plain stdlib unittest.mock, no live OCI connection, same style as
 test_insights.py) and assert the bind values the INSERT actually receives.
 """
 
@@ -89,19 +91,22 @@ class BinIdResolutionTests(unittest.TestCase):
         cursor = insert(location="FIRSTMATE-TEST")
         self.assertIsNone(cursor.insert_binds["bin_id"])
 
-    def test_live_camera_can_code_attributes_a_rig_location(self):
+    def test_a_configured_live_camera_can_never_claims_an_event_with_no_location(self):
         os.environ["LIVE_CAMERA_CAN_CODE"] = "VU-LIBRARY-01"
-        cursor = insert(location="live-webcam")
-        self.assertEqual(cursor.insert_binds["bin_id"], 14)
-        self.assertEqual(cursor.lookups, ["live-webcam", "VU-LIBRARY-01"])
+        cursor = insert()
+        self.assertIsNone(cursor.insert_binds["bin_id"])
+        self.assertEqual(cursor.lookups, [])
 
-    def test_live_camera_can_code_does_not_override_a_resolvable_location(self):
+    def test_a_configured_live_camera_can_never_claims_a_harness_capture(self):
         os.environ["LIVE_CAMERA_CAN_CODE"] = "VU-LIBRARY-01"
-        cursor = insert(location="VU-RAND-01")
-        self.assertEqual(cursor.insert_binds["bin_id"], 11)
+        for location in ("FIRSTMATE-TEST", "SKU Verification", "Loading Dock B"):
+            with self.subTest(location=location):
+                cursor = insert(location=location)
+                self.assertIsNone(cursor.insert_binds["bin_id"])
+                self.assertEqual(cursor.lookups, [location])
 
-    def test_blank_live_camera_can_code_is_treated_as_unset(self):
-        os.environ["LIVE_CAMERA_CAN_CODE"] = "   "
+    def test_a_rig_location_resolves_no_can_on_its_own(self):
+        os.environ["LIVE_CAMERA_CAN_CODE"] = "VU-LIBRARY-01"
         cursor = insert(location="live-webcam")
         self.assertIsNone(cursor.insert_binds["bin_id"])
 
@@ -114,6 +119,55 @@ class BinIdResolutionTests(unittest.TestCase):
         cursor = insert()
         self.assertIsNone(cursor.insert_binds["bin_id"])
         self.assertEqual(cursor.lookups, [])
+
+
+class CanIdForCodeTests(unittest.TestCase):
+    def resolve(self, can_code):
+        cursor = FakeCursor()
+        with mock.patch("db.get_connection", return_value=FakeConnection(cursor)):
+            return db.can_id_for_code(can_code)
+
+    def test_a_registered_code_resolves_to_its_can(self):
+        self.assertEqual(self.resolve("VU-LIBRARY-01"), 14)
+
+    def test_an_unregistered_code_resolves_to_no_can(self):
+        self.assertIsNone(self.resolve("VU-NOT-A-CAN"))
+
+
+class CameraServiceAttributionTests(unittest.TestCase):
+    """The live rig reports a rig name, not a can code, so it is the one caller
+    that names its can through LIVE_CAMERA_CAN_CODE."""
+
+    def setUp(self):
+        patcher = mock.patch.dict(os.environ, {}, clear=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        os.environ.pop("LIVE_CAMERA_CAN_CODE", None)
+
+    def persist(self):
+        import camera_service
+
+        detection = {"label": "bottle", "category": "recycling", "confidence": 0.91}
+        with mock.patch("db.insert_waste_event") as insert_event, mock.patch(
+            "db.can_id_for_code", side_effect=lambda code: CAN_IDS.get(code)
+        ):
+            camera_service.CameraService()._persist(detection)
+        return insert_event
+
+    def test_a_capture_is_attributed_to_the_configured_can(self):
+        os.environ["LIVE_CAMERA_CAN_CODE"] = "VU-LIBRARY-01"
+        insert_event = self.persist()
+        self.assertEqual(insert_event.call_args.kwargs["bin_id"], 14)
+        self.assertEqual(insert_event.call_args.kwargs["location"], "live-webcam")
+
+    def test_an_unconfigured_rig_logs_the_capture_unattributed(self):
+        insert_event = self.persist()
+        self.assertIsNone(insert_event.call_args.kwargs["bin_id"])
+
+    def test_a_configured_code_naming_no_registered_can_attributes_nothing(self):
+        os.environ["LIVE_CAMERA_CAN_CODE"] = "VU-NOT-A-CAN"
+        insert_event = self.persist()
+        self.assertIsNone(insert_event.call_args.kwargs["bin_id"])
 
 
 if __name__ == "__main__":

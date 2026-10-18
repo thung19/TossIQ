@@ -181,29 +181,29 @@ def match_product_by_image(embedding: list[float], max_distance: float = 0.3) ->
 # Disposal events (WASTE_EVENTS)
 # ---------------------------------------------------------------------------
 
-def _resolve_bin_id(cursor, location) -> int | None:
-    """The physical can an event belongs to, from the free-text LOCATION the
-    device reported.
+def _can_id_for_code(cursor, can_code) -> int | None:
+    """The CANS row for a can code, or None when the code is empty or names no
+    registered can.
 
-    A capture's LOCATION is matched against CANS.CAN_CODE, which is how the
-    seeded fleet's own events are attributed. A live camera rig reports a rig
-    name rather than a can code, so LIVE_CAMERA_CAN_CODE names the can it
-    feeds; it is only consulted when LOCATION itself resolves to nothing.
-    Returns None when neither resolves, which leaves BIN_ID NULL rather than
-    attributing items to a can that did not receive them.
+    A can must never be credited with items that were not put in it, so this
+    is an exact match on CAN_CODE and nothing else: there is no fallback can.
     """
-    candidates = [location, os.environ.get("LIVE_CAMERA_CAN_CODE")]
-    for candidate in candidates:
-        if not candidate or not str(candidate).strip():
-            continue
-        cursor.execute(
-            "SELECT can_id FROM cans WHERE can_code = :can_code",
-            can_code=str(candidate).strip(),
-        )
-        row = cursor.fetchone()
-        if row is not None:
-            return row[0]
-    return None
+    if not can_code or not str(can_code).strip():
+        return None
+    cursor.execute(
+        "SELECT can_id FROM cans WHERE can_code = :can_code",
+        can_code=str(can_code).strip(),
+    )
+    row = cursor.fetchone()
+    return row[0] if row is not None else None
+
+
+def can_id_for_code(can_code) -> int | None:
+    """can_id for a can code, for a caller that knows which can it is feeding
+    but only by code (see camera_service.py). None when the code names no
+    registered can."""
+    with get_connection() as conn, conn.cursor() as cursor:
+        return _can_id_for_code(cursor, can_code)
 
 
 def insert_waste_event(
@@ -222,10 +222,11 @@ def insert_waste_event(
     bin_id=None,
 ) -> int:
     """bin_id, when given, is the physical can the item was deposited in
-    (CANS.can_id). When it is not given it is resolved from `location` (see
-    _resolve_bin_id), so a caller does not have to know which can it is
-    feeding; it stays NULL for a capture that cannot be attributed to a
-    registered unit, which is why the column is nullable.
+    (CANS.can_id). When it is not given it is resolved by matching `location`
+    against CANS.CAN_CODE, which is how the seeded fleet's own events are
+    attributed; a capture whose location is empty or names no registered can
+    stays NULL rather than being credited to some other can, which is why the
+    column is nullable.
 
     created_at, when given, is the actual capture/disposal time (e.g. from an
     edge device queued during a network outage) rather than persist time; it is
@@ -234,7 +235,7 @@ def insert_waste_event(
     created_at_sql = ":created_at" if created_at is not None else "SYSTIMESTAMP"
     with get_connection() as conn, conn.cursor() as cursor:
         if bin_id is None:
-            bin_id = _resolve_bin_id(cursor, location)
+            bin_id = _can_id_for_code(cursor, location)
         event_id_var = cursor.var(int)
         cursor.execute(
             f"""
