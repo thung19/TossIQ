@@ -102,3 +102,129 @@ export type AskuAnswer = {
   model_id: string;
   grounding: AskuObservationSection[];
 };
+
+// --- Campus fleet -------------------------------------------------------
+// status and fill_source are resolved server-side by fleet.py. The frontend
+// never recomputes them: it maps a status to a colour and renders the reasons
+// the API supplies, so retuning a threshold needs no change here.
+
+export type CanStatus = "ok" | "needs_service" | "fault" | "offline";
+
+// "unknown" is the honest answer for a can with no fill signal: there are no
+// weight sensors, so a can with nothing attributed to it reports no fill
+// rather than 0% observed.
+export type FillSource = "observed" | "simulated" | "unknown" | null;
+
+export type Can = {
+  can_id: number;
+  can_code: string;
+  floor: string | null;
+  placement_note: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  installed_on: string | null;
+  lifecycle_status: string;
+  is_simulated: number;
+  model_id: number;
+  model_code: string;
+  model_name: string;
+  capacity_liters: number | null;
+  capacity_items: number;
+  height_cm: number | null;
+  stream_count: number | null;
+  has_camera: number;
+  has_actuator: number;
+  firmware_version: string | null;
+  building_id: number;
+  building_code: string;
+  building_name: string;
+  campus_area: string | null;
+  reported_at: string | null;
+  fill_percent: number | null;
+  fill_source: FillSource;
+  camera_ok: number | null;
+  actuator_ok: number | null;
+  connectivity_ok: number | null;
+  battery_percent: number | null;
+  fault_code: string | null;
+  fault_detail: string | null;
+  last_emptied_at: string | null;
+  events_since_emptied: number;
+  status: CanStatus;
+  status_reasons: string[];
+};
+
+export type CanReading = {
+  reading_id: number;
+  reported_at: string | null;
+  fill_percent: number | null;
+  fill_source: FillSource;
+  camera_ok: number | null;
+  actuator_ok: number | null;
+  connectivity_ok: number | null;
+  battery_percent: number | null;
+  fault_code: string | null;
+  fault_detail: string | null;
+};
+
+export type ServiceEvent = {
+  service_id: number;
+  service_type: string;
+  performed_at: string | null;
+  performed_by: string | null;
+  notes: string | null;
+};
+
+export type CanDetail = Can & {
+  readings: CanReading[];
+  service_events: ServiceEvent[];
+};
+
+export type CanContents = {
+  can_id: number;
+  since: string | null;
+  window_days: number | null;
+  total_items: number;
+  by_category: { category: string; count: number }[];
+  top_items: {
+    detected_object: string | null;
+    matched_product: string | null;
+    count: number;
+    estimated_value: number | null;
+  }[];
+  estimated_value: number | null;
+  events: (WasteEvent & { image_url: string | null })[];
+};
+
+export type CanModel = {
+  model_id: number;
+  model_code: string;
+  display_name: string;
+  capacity_liters: number | null;
+  capacity_items: number;
+  height_cm: number | null;
+  stream_count: number | null;
+  has_camera: number;
+  has_actuator: number;
+  firmware_version: string | null;
+  released_on: string | null;
+};
+
+export type Building = {
+  building_id: number;
+  building_code: string;
+  name: string;
+  campus_area: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  can_count: number;
+};
+
+export type FleetSummary = {
+  total: number;
+  by_status: Record<CanStatus, number>;
+  simulated: number;
+  observed: number;
+  stale_minutes: number;
+  service_threshold_percent: number;
+};

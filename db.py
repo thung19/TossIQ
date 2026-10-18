@@ -1,9 +1,13 @@
 """OCI Autonomous DB access layer for TossIQ.
 
-All disposal-event persistence, catalog (PRODUCTS) lookups, and
-recommendation storage go through here. Kept deliberately thin: plain
-SQL over python-oracledb, no ORM, since the schema is small and already
-fixed in OCI (WASTE_EVENTS / PRODUCTS / RECOMMENDATIONS).
+All disposal-event persistence, catalog (PRODUCTS) lookups, recommendation
+storage, and campus-fleet inventory queries go through here. Kept deliberately
+thin: plain SQL over python-oracledb, no ORM, since the schema is small.
+
+WASTE_EVENTS / PRODUCTS / RECOMMENDATIONS predate this repository tracking its
+own DDL and exist in OCI without tracked definitions. The campus-fleet tables
+(CAN_MODELS / BUILDINGS / CANS / CAN_READINGS / SERVICE_EVENTS, and
+WASTE_EVENTS.BIN_ID) are defined in schema/ and applied by schema/apply.py.
 
 Connections are opened per call rather than pooled -- simplest thing that
 works for a hackathon demo's request volume. Swap for a oracledb.create_pool()
@@ -177,6 +181,31 @@ def match_product_by_image(embedding: list[float], max_distance: float = 0.3) ->
 # Disposal events (WASTE_EVENTS)
 # ---------------------------------------------------------------------------
 
+def _can_id_for_code(cursor, can_code) -> int | None:
+    """The CANS row for a can code, or None when the code is empty or names no
+    registered can.
+
+    A can must never be credited with items that were not put in it, so this
+    is an exact match on CAN_CODE and nothing else: there is no fallback can.
+    """
+    if not can_code or not str(can_code).strip():
+        return None
+    cursor.execute(
+        "SELECT can_id FROM cans WHERE can_code = :can_code",
+        can_code=str(can_code).strip(),
+    )
+    row = cursor.fetchone()
+    return row[0] if row is not None else None
+
+
+def can_id_for_code(can_code) -> int | None:
+    """can_id for a can code, for a caller that knows which can it is feeding
+    but only by code (see camera_service.py). None when the code names no
+    registered can."""
+    with get_connection() as conn, conn.cursor() as cursor:
+        return _can_id_for_code(cursor, can_code)
+
+
 def insert_waste_event(
     detected_object=None,
     material=None,
@@ -190,22 +219,32 @@ def insert_waste_event(
     hazard_reason=None,
     visible_text=None,
     reusable_condition=None,
+    bin_id=None,
 ) -> int:
-    """created_at, when given, is the actual capture/disposal time (e.g. from an
+    """bin_id, when given, is the physical can the item was deposited in
+    (CANS.can_id). When it is not given it is resolved by matching `location`
+    against CANS.CAN_CODE, which is how the seeded fleet's own events are
+    attributed; a capture whose location is empty or names no registered can
+    stays NULL rather than being credited to some other can, which is why the
+    column is nullable.
+
+    created_at, when given, is the actual capture/disposal time (e.g. from an
     edge device queued during a network outage) rather than persist time; it is
     passed straight through as a bind value, so SYSTIMESTAMP is only used when
     the caller has no capture-time timestamp to report."""
     created_at_sql = ":created_at" if created_at is not None else "SYSTIMESTAMP"
     with get_connection() as conn, conn.cursor() as cursor:
+        if bin_id is None:
+            bin_id = _can_id_for_code(cursor, location)
         event_id_var = cursor.var(int)
         cursor.execute(
             f"""
             INSERT INTO waste_events
                 (product_id, detected_object, material, category, location, confidence, image_key, created_at,
-                 hazard_flag, hazard_reason, visible_text, reusable_condition)
+                 hazard_flag, hazard_reason, visible_text, reusable_condition, bin_id)
             VALUES
                 (:product_id, :detected_object, :material, :category, :location, :confidence, :image_key, {created_at_sql},
-                 :hazard_flag, :hazard_reason, :visible_text, :reusable_condition)
+                 :hazard_flag, :hazard_reason, :visible_text, :reusable_condition, :bin_id)
             RETURNING event_id INTO :event_id
             """,
             product_id=product_id,
@@ -220,6 +259,7 @@ def insert_waste_event(
             hazard_reason=hazard_reason,
             visible_text=visible_text,
             reusable_condition=reusable_condition,
+            bin_id=bin_id,
             **({"created_at": created_at} if created_at is not None else {}),
         )
         conn.commit()
@@ -419,3 +459,385 @@ def list_recommendations(limit: int = 20) -> list[dict]:
             }
             for r in cursor.fetchall()
         ]
+
+
+# ---------------------------------------------------------------------------
+# Campus fleet (CAN_MODELS / BUILDINGS / CANS / CAN_READINGS / SERVICE_EVENTS)
+# ---------------------------------------------------------------------------
+# Physical-unit inventory behind the campus map. Status and fill are *derived*
+# from these rows rather than stored on them -- see fleet.py, which owns that
+# derivation; everything here is plain retrieval and insertion.
+
+def list_can_models() -> list[dict]:
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT model_id, model_code, display_name, capacity_liters, capacity_items,
+                   height_cm, stream_count, has_camera, has_actuator, firmware_version, released_on
+            FROM can_models
+            ORDER BY capacity_liters DESC, model_code
+            """
+        )
+        cols = [d[0].lower() for d in cursor.description]
+        rows = [dict(zip(cols, row)) for row in cursor.fetchall()]
+        for row in rows:
+            row["released_on"] = row["released_on"].strftime("%Y-%m-%d") if row["released_on"] else None
+        return rows
+
+
+def list_buildings() -> list[dict]:
+    """Buildings with their active can count, so the sidebar and filter list can
+    show where the fleet actually is."""
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT b.building_id, b.building_code, b.name, b.campus_area,
+                   b.latitude, b.longitude,
+                   (SELECT COUNT(*) FROM cans c
+                     WHERE c.building_id = b.building_id AND c.lifecycle_status = 'active') AS can_count
+            FROM buildings b
+            ORDER BY b.name
+            """
+        )
+        cols = [d[0].lower() for d in cursor.description]
+        return [dict(zip(cols, row)) for row in cursor.fetchall()]
+
+
+# One row per can: stored columns, joined model and building, the latest
+# reading flattened on, and the raw inputs fleet.py needs to derive fill
+# (events attributed to this can since it was last emptied, and the model's
+# item capacity). Non-active cans are excluded -- a removed can is not on the
+# map and should not count towards fleet health.
+_CAN_ROW_SQL = """
+WITH latest_reading AS (
+    SELECT r.*,
+           ROW_NUMBER() OVER (PARTITION BY r.can_id ORDER BY r.reported_at DESC, r.reading_id DESC) AS rn
+    FROM can_readings r
+),
+last_emptied AS (
+    SELECT can_id, MAX(performed_at) AS emptied_at
+    FROM service_events
+    WHERE service_type = 'emptied'
+    GROUP BY can_id
+)
+SELECT c.can_id, c.can_code, c.floor, c.placement_note,
+       c.latitude, c.longitude, c.installed_on, c.lifecycle_status, c.is_simulated,
+       m.model_id, m.model_code, m.display_name AS model_name,
+       m.capacity_liters, m.capacity_items, m.height_cm, m.stream_count,
+       m.has_camera, m.has_actuator, m.firmware_version,
+       b.building_id, b.building_code, b.name AS building_name, b.campus_area,
+       l.reported_at, l.fill_percent, l.camera_ok, l.actuator_ok, l.connectivity_ok,
+       l.battery_percent, l.fault_code, l.fault_detail,
+       le.emptied_at AS last_emptied_at,
+       (SELECT COUNT(*)
+          FROM waste_events we
+         WHERE we.bin_id = c.can_id
+           AND (le.emptied_at IS NULL OR we.created_at >= le.emptied_at)) AS events_since_emptied
+FROM cans c
+JOIN can_models m ON m.model_id = c.model_id
+JOIN buildings b ON b.building_id = c.building_id
+LEFT JOIN latest_reading l ON l.can_id = c.can_id AND l.rn = 1
+LEFT JOIN last_emptied le ON le.can_id = c.can_id
+WHERE c.lifecycle_status = 'active'
+"""
+
+
+def list_can_rows(
+    can_id: int | None = None,
+    building_id: int | None = None,
+    model_id: int | None = None,
+) -> list[dict]:
+    """Raw can rows for fleet.py to resolve. Status is deliberately not a filter
+    here: it does not exist as a column, so fleet.py filters on it after
+    deriving it."""
+    clauses = []
+    binds: dict = {}
+    if can_id is not None:
+        clauses.append("AND c.can_id = :can_id")
+        binds["can_id"] = can_id
+    if building_id is not None:
+        clauses.append("AND c.building_id = :building_id")
+        binds["building_id"] = building_id
+    if model_id is not None:
+        clauses.append("AND c.model_id = :model_id")
+        binds["model_id"] = model_id
+
+    sql = _CAN_ROW_SQL + "\n".join(clauses) + "\nORDER BY b.name, c.can_code"
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(sql, **binds)
+        cols = [d[0].lower() for d in cursor.description]
+        rows = [dict(zip(cols, row)) for row in cursor.fetchall()]
+        for row in rows:
+            row["installed_on"] = row["installed_on"].strftime("%Y-%m-%d") if row["installed_on"] else None
+            for key in ("latitude", "longitude", "capacity_liters", "height_cm", "battery_percent"):
+                if row[key] is not None:
+                    row[key] = float(row[key])
+        return rows
+
+
+def list_can_readings(can_id: int, limit: int = 200) -> list[dict]:
+    """Newest-first telemetry tail for one can."""
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT reading_id, reported_at, fill_percent, fill_source, camera_ok, actuator_ok,
+                   connectivity_ok, battery_percent, fault_code, fault_detail
+            FROM can_readings
+            WHERE can_id = :can_id
+            ORDER BY reported_at DESC, reading_id DESC
+            FETCH FIRST :limit ROWS ONLY
+            """,
+            can_id=can_id,
+            limit=limit,
+        )
+        cols = [d[0].lower() for d in cursor.description]
+        rows = [dict(zip(cols, row)) for row in cursor.fetchall()]
+        for row in rows:
+            row["reported_at"] = row["reported_at"].strftime("%Y-%m-%d %H:%M:%S") if row["reported_at"] else None
+            for key in ("fill_percent", "battery_percent"):
+                if row[key] is not None:
+                    row[key] = float(row[key])
+        return rows
+
+
+def list_service_events(can_id: int, limit: int = 20) -> list[dict]:
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT service_id, service_type, performed_at, performed_by, notes
+            FROM service_events
+            WHERE can_id = :can_id
+            ORDER BY performed_at DESC, service_id DESC
+            FETCH FIRST :limit ROWS ONLY
+            """,
+            can_id=can_id,
+            limit=limit,
+        )
+        cols = [d[0].lower() for d in cursor.description]
+        rows = [dict(zip(cols, row)) for row in cursor.fetchall()]
+        for row in rows:
+            row["performed_at"] = row["performed_at"].strftime("%Y-%m-%d %H:%M:%S") if row["performed_at"] else None
+        return rows
+
+
+def insert_service_event(can_id: int, service_type: str, performed_by=None, notes=None) -> int:
+    with get_connection() as conn, conn.cursor() as cursor:
+        service_id_var = cursor.var(int)
+        cursor.execute(
+            """
+            INSERT INTO service_events (can_id, service_type, performed_at, performed_by, notes)
+            VALUES (:can_id, :service_type, SYSTIMESTAMP, :performed_by, :notes)
+            RETURNING service_id INTO :service_id
+            """,
+            can_id=can_id,
+            service_type=service_type,
+            performed_by=performed_by,
+            notes=notes,
+            service_id=service_id_var,
+        )
+        conn.commit()
+        return service_id_var.getvalue()[0]
+
+
+def can_contents(can_id: int, days: int = 30, event_limit: int = 50) -> dict:
+    """What one can contains: the category split, the items seen most often, the
+    estimated catalog value of what was thrown away, and the recent events
+    themselves.
+
+    Scoped to disposals since the can was last emptied where that is known, so
+    "contains" means what is in it now rather than everything it has ever seen;
+    falls back to the `days` window for a can with no emptying on record.
+    The estimated_value join mirrors stats_items -- catalog cost times count,
+    only for events matched to a PRODUCTS row.
+    """
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT MAX(performed_at) FROM service_events
+            WHERE can_id = :can_id AND service_type = 'emptied'
+            """,
+            can_id=can_id,
+        )
+        last_emptied = cursor.fetchone()[0]
+
+        if last_emptied is not None:
+            window_sql = "we.created_at >= :since"
+            binds = {"can_id": can_id, "since": last_emptied}
+        else:
+            window_sql = "we.created_at >= SYSTIMESTAMP - :days"
+            binds = {"can_id": can_id, "days": days}
+
+        cursor.execute(
+            f"""
+            SELECT COALESCE(we.category, 'unknown') AS category, COUNT(*) AS n
+            FROM waste_events we
+            WHERE we.bin_id = :can_id AND {window_sql}
+            GROUP BY COALESCE(we.category, 'unknown')
+            ORDER BY n DESC
+            """,
+            **binds,
+        )
+        by_category = [{"category": r[0], "count": r[1]} for r in cursor.fetchall()]
+
+        cursor.execute(
+            f"""
+            SELECT we.detected_object, p.product_name, COUNT(*) AS n, p.unit_cost
+            FROM waste_events we
+            LEFT JOIN products p ON p.product_id = we.product_id
+            WHERE we.bin_id = :can_id AND {window_sql} AND we.detected_object IS NOT NULL
+            GROUP BY we.detected_object, p.product_name, p.unit_cost
+            ORDER BY n DESC
+            FETCH FIRST 10 ROWS ONLY
+            """,
+            **binds,
+        )
+        top_items = []
+        for detected_object, product_name, count, unit_cost in cursor.fetchall():
+            top_items.append({
+                "detected_object": detected_object,
+                "matched_product": product_name,
+                "count": count,
+                "estimated_value": float(unit_cost) * count if unit_cost is not None else None,
+            })
+
+        cursor.execute(
+            f"""
+            SELECT SUM(p.unit_cost)
+            FROM waste_events we
+            JOIN products p ON p.product_id = we.product_id
+            WHERE we.bin_id = :can_id AND {window_sql}
+            """,
+            **binds,
+        )
+        total_value_row = cursor.fetchone()[0]
+
+        cursor.execute(
+            f"""
+            SELECT we.event_id, we.detected_object, we.material, we.category, we.location,
+                   we.confidence, we.image_key, we.created_at, we.hazard_flag, we.hazard_reason,
+                   we.visible_text, we.reusable_condition
+            FROM waste_events we
+            WHERE we.bin_id = :can_id AND {window_sql}
+            ORDER BY we.created_at DESC
+            FETCH FIRST :event_limit ROWS ONLY
+            """,
+            **binds,
+            event_limit=event_limit,
+        )
+        cols = [d[0].lower() for d in cursor.description]
+        events = [dict(zip(cols, row)) for row in cursor.fetchall()]
+        for event in events:
+            if event["created_at"]:
+                event["created_at"] = event["created_at"].strftime("%Y-%m-%d %H:%M:%S")
+
+        return {
+            "can_id": can_id,
+            "since": last_emptied.strftime("%Y-%m-%d %H:%M:%S") if last_emptied else None,
+            "window_days": None if last_emptied else days,
+            "total_items": sum(row["count"] for row in by_category),
+            "by_category": by_category,
+            "top_items": top_items,
+            "estimated_value": float(total_value_row) if total_value_row is not None else None,
+            "events": events,
+        }
+
+
+# --- Fleet inventory upserts (used by seed_campus.py; keyed on the natural
+# --- business codes so re-running inserts nothing a second time) -------------
+
+def _upsert(table: str, key_column: str, key_value, columns: dict, pk_column: str) -> int:
+    """Insert-or-skip on a natural key, returning the row's primary key.
+
+    Oracle's MERGE would work here, but these tables use GENERATED ALWAYS AS
+    IDENTITY keys and the seed needs the resulting id either way, so a lookup
+    followed by a RETURNING insert is both shorter and easier to read than a
+    MERGE plus a second SELECT. Nothing is ever updated: an existing row is
+    left exactly as it is, which is what makes the seed safe to re-run against
+    a database someone has since edited by hand.
+    """
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            f"SELECT {pk_column} FROM {table} WHERE {key_column} = :key_value",
+            key_value=key_value,
+        )
+        row = cursor.fetchone()
+        if row is not None:
+            return row[0]
+
+        names = [key_column, *columns.keys()]
+        binds = {key_column: key_value, **columns}
+        placeholders = ", ".join(f":{name}" for name in names)
+        pk_var = cursor.var(int)
+        cursor.execute(
+            f"""
+            INSERT INTO {table} ({", ".join(names)})
+            VALUES ({placeholders})
+            RETURNING {pk_column} INTO :pk_out
+            """,
+            **binds,
+            pk_out=pk_var,
+        )
+        conn.commit()
+        return pk_var.getvalue()[0]
+
+
+def upsert_can_model(model_code: str, **columns) -> int:
+    return _upsert("can_models", "model_code", model_code, columns, "model_id")
+
+
+def upsert_building(building_code: str, **columns) -> int:
+    return _upsert("buildings", "building_code", building_code, columns, "building_id")
+
+
+def upsert_can(can_code: str, **columns) -> int:
+    return _upsert("cans", "can_code", can_code, columns, "can_id")
+
+
+def count_rows_by_can(table: str) -> dict[int, int]:
+    """Row counts per can_id for an append-only fleet table.
+
+    The seed uses this to decide which cans still need a telemetry tail or a
+    service history: a can that already has rows is left untouched rather than
+    accumulating a duplicate tail on every re-run.
+    """
+    if table not in ("can_readings", "service_events"):
+        raise ValueError(f"Unsupported table for per-can counts: {table!r}")
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(f"SELECT can_id, COUNT(*) FROM {table} GROUP BY can_id")
+        return {row[0]: row[1] for row in cursor.fetchall()}
+
+
+def count_waste_events_by_can() -> dict[int, int]:
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            "SELECT bin_id, COUNT(*) FROM waste_events WHERE bin_id IS NOT NULL GROUP BY bin_id"
+        )
+        return {row[0]: row[1] for row in cursor.fetchall()}
+
+
+def backfill_waste_event_bin_ids(location_to_can_code: dict[str, str]) -> dict[str, int]:
+    """Attributes already-logged events to a can where their free-text LOCATION
+    clearly corresponds to one.
+
+    LOCATION is deliberately left in place as the raw value the device
+    reported; BIN_ID is the resolved physical unit alongside it. Only rows
+    with BIN_ID still NULL are touched, so a hand-corrected attribution is
+    never overwritten. Returns rows updated per location.
+    """
+    updated = {}
+    with get_connection() as conn, conn.cursor() as cursor:
+        for location, can_code in location_to_can_code.items():
+            cursor.execute(
+                """
+                UPDATE waste_events
+                SET bin_id = (SELECT can_id FROM cans WHERE can_code = :can_code)
+                WHERE location = :location
+                  AND bin_id IS NULL
+                  AND EXISTS (SELECT 1 FROM cans WHERE can_code = :can_code)
+                """,
+                can_code=can_code,
+                location=location,
+            )
+            updated[location] = cursor.rowcount
+        conn.commit()
+    return updated

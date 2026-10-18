@@ -206,20 +206,26 @@ class CameraService:
         self._persist_async(d)
 
     def _persist_async(self, d: dict) -> None:
-        def _run() -> None:
-            try:
-                import db
+        threading.Thread(target=self._persist, args=(d,), daemon=True).start()
 
-                db.insert_waste_event(
-                    detected_object=d["label"],
-                    category=d["category"],
-                    confidence=round(d["confidence"], 4),
-                    location="live-webcam",
-                )
-            except Exception:
-                logger.exception("Camera service: auto-persist failed")
+    def _persist(self, d: dict) -> None:
+        """Logs one detection. This rig reports LOCATION 'live-webcam', which is
+        a rig name and not a can code, so the can it feeds is named by
+        LIVE_CAMERA_CAN_CODE and resolved here; unset means the capture is
+        logged with no can attributed to it."""
+        try:
+            import db
 
-        threading.Thread(target=_run, daemon=True).start()
+            can_code = os.environ.get("LIVE_CAMERA_CAN_CODE", "").strip()
+            db.insert_waste_event(
+                detected_object=d["label"],
+                category=d["category"],
+                confidence=round(d["confidence"], 4),
+                location="live-webcam",
+                bin_id=db.can_id_for_code(can_code) if can_code else None,
+            )
+        except Exception:
+            logger.exception("Camera service: auto-persist failed")
 
     def latest_jpeg(self) -> bytes | None:
         with self._frame_lock:

@@ -50,15 +50,22 @@ const Icon = {
       <rect x="3" y="3" width="10" height="10" rx="1" stroke="currentColor" strokeWidth="1.1" />
     </svg>
   ),
-  dot: (color: string, filled = true) => (
+  pin: (
     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <circle cx="8" cy="8" r="4" stroke={color} strokeWidth="1.2" fill={filled ? color : "none"} />
+      <path
+        d="M8 14s4.2-4.3 4.2-7.3A4.2 4.2 0 008 2.5a4.2 4.2 0 00-4.2 4.2C3.8 9.7 8 14 8 14z"
+        stroke="currentColor"
+        strokeWidth="1.1"
+        strokeLinejoin="round"
+      />
+      <circle cx="8" cy="6.6" r="1.5" stroke="currentColor" strokeWidth="1.1" />
     </svg>
   ),
 };
 
 const PRIMARY: NavItem[] = [
   { href: "/", label: "Live sorting", icon: Icon.camera },
+  { href: "/map", label: "Campus map", icon: Icon.pin },
   { href: "/analytics", label: "Analytics", icon: Icon.chart },
   { href: "/dataset", label: "Dataset", icon: Icon.dataset },
   { href: "/operations", label: "Operator insights", icon: Icon.user },
@@ -106,25 +113,6 @@ export default function Sidebar({
           <span className="rail" />
           <span className="nav-icon">{Icon.sq}</span>
           <span className="nav-label">Projects</span>
-        </div>
-      </nav>
-
-      <div className="group-label">favorites</div>
-      <nav className="nav-group">
-        <div className="nav-row static">
-          <span className="rail" />
-          <span className="nav-icon">{Icon.dot("#f5c842", false)}</span>
-          <span className="nav-label">Dining Hall East</span>
-        </div>
-        <div className="nav-row static">
-          <span className="rail" />
-          <span className="nav-icon">{Icon.dot("#10b981", true)}</span>
-          <span className="nav-label">Warehouse A</span>
-        </div>
-        <div className="nav-row static">
-          <span className="rail" />
-          <span className="nav-icon">{Icon.dot("#62666d", false)}</span>
-          <span className="nav-label">Office floor 3</span>
         </div>
       </nav>
 
