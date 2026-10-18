@@ -11,6 +11,26 @@ export async function apiFetch<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** POST variant of apiFetch. Surfaces FastAPI's `detail` string so a
+ * backend failure (e.g. OCI unreachable on /asku) renders as the message
+ * the API wrote rather than a bare status code. */
+export async function apiPost<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const detail = await res
+      .json()
+      .then((d) => (typeof d?.detail === "string" ? d.detail : null))
+      .catch(() => null);
+    throw new Error(detail || `${path} → ${res.status}`);
+  }
+  return res.json() as Promise<T>;
+}
+
 export type Detection = {
   x1: number;
   y1: number;
@@ -68,4 +88,17 @@ export type Product = {
   sku: string | null;
   material: string | null;
   unit_cost: number | null;
+};
+
+export type AskuObservationSection = {
+  title: string;
+  lines: string[];
+};
+
+export type AskuAnswer = {
+  question: string;
+  answer: string;
+  window_days: number;
+  model_id: string;
+  grounding: AskuObservationSection[];
 };

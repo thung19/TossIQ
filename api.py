@@ -41,8 +41,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, UnidentifiedImageError
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+import asku
 import db
 import image_embed
 import insights
@@ -117,6 +118,24 @@ class SortResponse(BaseModel):
     confidence: float | None = None
     needs_review: bool
     reason: str
+
+
+class AskuRequest(BaseModel):
+    question: str = Field(..., min_length=1)
+    days: int = asku.DEFAULT_WINDOW_DAYS
+
+
+class AskuObservationSection(BaseModel):
+    title: str
+    lines: list[str]
+
+
+class AskuResponse(BaseModel):
+    question: str
+    answer: str
+    window_days: int
+    model_id: str
+    grounding: list[AskuObservationSection]
 
 
 class ProductIn(BaseModel):
@@ -427,6 +446,25 @@ def get_recommendations(limit: int = 20):
 def generate_recommendations(days: int = 30):
     new_texts = insights.generate_recommendations(days=days)
     return {"new_recommendations": new_texts}
+
+
+# ---------------------------------------------------------------------------
+# ASKU -- grounded chat over the observed analytics above (Experience 5)
+# ---------------------------------------------------------------------------
+
+@app.post("/asku", response_model=AskuResponse)
+def ask_asku(request: AskuRequest):
+    """Answers one plain-language question from the logged analytics only.
+
+    The response carries the observation sections the answer was grounded
+    in, so the dashboard can show the operator the basis for it. An OCI
+    (database or Generative AI) failure arrives here as an asku.AskuError
+    and is reported as one renderable message rather than a stack trace.
+    """
+    try:
+        return asku.answer_question(request.question, days=request.days)
+    except asku.AskuError as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 # ---------------------------------------------------------------------------

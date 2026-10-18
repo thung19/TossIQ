@@ -1,0 +1,309 @@
+"use client";
+
+import { useRef, useState } from "react";
+import PageHeader from "../components/PageHeader";
+import AskuGrounding from "../components/AskuGrounding";
+import { apiPost, type AskuAnswer } from "../../lib/api";
+
+const WINDOW_OPTIONS = [7, 30, 90];
+
+const EXAMPLE_QUESTIONS = [
+  "Which item is discarded most often, and how many times?",
+  "Which location sends the most to landfill?",
+  "Has anything been flagged as hazardous?",
+  "What catalog products are we throwing away, and what is that worth?",
+];
+
+type Turn = {
+  id: number;
+  question: string;
+  windowDays: number;
+  answer: AskuAnswer | null;
+  error: string | null;
+};
+
+export default function AskuPage() {
+  const [question, setQuestion] = useState("");
+  const [windowDays, setWindowDays] = useState(30);
+  const [turns, setTurns] = useState<Turn[]>([]);
+  const [pending, setPending] = useState(false);
+  const nextId = useRef(1);
+
+  const ask = async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed || pending) return;
+
+    const id = nextId.current++;
+    const days = windowDays;
+    setTurns((prev) => [...prev, { id, question: trimmed, windowDays: days, answer: null, error: null }]);
+    setQuestion("");
+    setPending(true);
+    try {
+      const answer = await apiPost<AskuAnswer>("/asku", { question: trimmed, days });
+      setTurns((prev) => prev.map((t) => (t.id === id ? { ...t, answer } : t)));
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Request failed";
+      setTurns((prev) => prev.map((t) => (t.id === id ? { ...t, error: message } : t)));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      ask(question);
+    }
+  };
+
+  const lastModel = [...turns].reverse().find((t) => t.answer)?.answer?.model_id;
+
+  return (
+    <>
+      <PageHeader
+        breadcrumb="Intelligence"
+        title="ASKU assistant"
+        right={<span className="header-meta">{lastModel || "OCI Generative AI"}</span>}
+      />
+
+      <div className="page">
+        <p className="preamble">
+          Answers come only from what TossIQ has logged for this organization. Every figure is
+          read from the recorded disposal events and product catalog shown under each answer; the
+          assistant says so plainly when the data does not cover a question.
+        </p>
+
+        <section className="transcript">
+          {turns.length === 0 && (
+            <div className="empty">
+              <span className="empty-label">try asking</span>
+              <div className="examples">
+                {EXAMPLE_QUESTIONS.map((q) => (
+                  <button key={q} type="button" className="example" onClick={() => ask(q)}>
+                    {q}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {turns.map((turn) => (
+            <article key={turn.id} className="turn">
+              <div className="q">
+                <span className="q-mark">?</span>
+                <span className="q-text">{turn.question}</span>
+                <span className="q-window">last {turn.windowDays}d</span>
+              </div>
+
+              {turn.answer && (
+                <div className="a">
+                  <p className="a-text">{turn.answer.answer}</p>
+                  <AskuGrounding sections={turn.answer.grounding} />
+                </div>
+              )}
+
+              {turn.error && (
+                <div className="a">
+                  <p className="a-error">{turn.error}</p>
+                </div>
+              )}
+
+              {!turn.answer && !turn.error && <div className="a-pending">reading logged analytics…</div>}
+            </article>
+          ))}
+        </section>
+
+        <section className="composer">
+          <textarea
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            onKeyDown={onKeyDown}
+            placeholder="Ask about this organization's waste data…"
+            rows={2}
+            disabled={pending}
+          />
+          <div className="composer-row">
+            <label className="window">
+              <span>window</span>
+              <select value={windowDays} onChange={(e) => setWindowDays(Number(e.target.value))}>
+                {WINDOW_OPTIONS.map((d) => (
+                  <option key={d} value={d}>
+                    last {d} days
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button type="button" className="ask" onClick={() => ask(question)} disabled={pending || !question.trim()}>
+              {pending ? "asking…" : "ask"}
+            </button>
+          </div>
+        </section>
+      </div>
+
+      <style jsx>{`
+        .header-meta {
+          font-size: 11px;
+          color: var(--text-muted);
+        }
+        .page {
+          padding: 16px 24px 24px;
+          display: flex;
+          flex-direction: column;
+          gap: 14px;
+          max-width: 860px;
+          width: 100%;
+          min-width: 0;
+        }
+        .preamble {
+          font-size: 12.5px;
+          line-height: 19px;
+          color: var(--text-muted);
+        }
+        .transcript {
+          display: flex;
+          flex-direction: column;
+          gap: 18px;
+        }
+        .empty {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+        .empty-label {
+          font-family: ui-monospace, Menlo, monospace;
+          font-size: 10.5px;
+          color: var(--text-dim);
+          text-transform: lowercase;
+        }
+        .examples {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 4px;
+        }
+        .example {
+          text-align: left;
+          font-size: 12.5px;
+          color: var(--link);
+          padding: 3px 0;
+        }
+        .example:hover {
+          color: var(--mention-text);
+        }
+        .turn {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          min-width: 0;
+        }
+        .q {
+          display: grid;
+          grid-template-columns: 12px minmax(0, 1fr) auto;
+          align-items: baseline;
+          column-gap: 8px;
+        }
+        .q-mark {
+          font-family: ui-monospace, Menlo, monospace;
+          font-size: 12px;
+          color: var(--text-dim);
+        }
+        .q-text {
+          font-size: 13.5px;
+          font-weight: 510;
+          color: var(--text-primary);
+          line-height: 20px;
+          overflow-wrap: anywhere;
+        }
+        .q-window {
+          font-family: ui-monospace, Menlo, monospace;
+          font-size: 10.5px;
+          color: var(--text-dim);
+          white-space: nowrap;
+        }
+        .a {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          padding-left: 20px;
+          min-width: 0;
+        }
+        .a-text {
+          font-size: 13px;
+          line-height: 20px;
+          color: var(--text-secondary);
+          white-space: pre-wrap;
+        }
+        .a-error {
+          font-size: 12.5px;
+          line-height: 19px;
+          color: var(--status-bug);
+          font-family: ui-monospace, Menlo, monospace;
+          overflow-wrap: anywhere;
+        }
+        .a-pending {
+          padding-left: 20px;
+          font-family: ui-monospace, Menlo, monospace;
+          font-size: 11px;
+          color: var(--text-dim);
+        }
+        .composer {
+          border: 1px solid var(--border-08);
+          border-radius: 4px;
+          background: var(--bg-surface);
+          padding: 8px 10px;
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+        .composer textarea {
+          width: 100%;
+          resize: vertical;
+          font-size: 13px;
+          line-height: 19px;
+          color: var(--text-primary);
+        }
+        .composer textarea::placeholder {
+          color: var(--text-dim);
+        }
+        .composer-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+        }
+        .window {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          font-family: ui-monospace, Menlo, monospace;
+          font-size: 11px;
+          color: var(--text-dim);
+        }
+        .window select {
+          color: var(--text-secondary);
+          background: var(--bg-elevated);
+          border: 1px solid var(--border-08);
+          border-radius: 3px;
+          padding: 2px 4px;
+          font-size: 11px;
+        }
+        .ask {
+          font-family: ui-monospace, Menlo, monospace;
+          font-size: 11px;
+          color: var(--text-primary);
+          background: var(--overlay-08);
+          border: 1px solid var(--border-08);
+          border-radius: 3px;
+          padding: 4px 12px;
+        }
+        .ask:hover:not(:disabled) {
+          background: var(--primary);
+        }
+        .ask:disabled {
+          color: var(--text-dim);
+          cursor: default;
+        }
+      `}</style>
+    </>
+  );
+}

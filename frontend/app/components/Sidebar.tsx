@@ -34,6 +34,12 @@ const Icon = {
       <path d="M3.5 13.5c0-2.2 2-4 4.5-4s4.5 1.8 4.5 4" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
     </svg>
   ),
+  ask: (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path d="M3 3.5h10v7H8.5L5.5 13v-2.5H3v-7z" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round" />
+      <path d="M6.6 6.1a1.4 1.4 0 012.8.2c0 .9-1.2 1-1.3 1.8" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+    </svg>
+  ),
   hex: (
     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
       <path d="M8 2l5 3v6l-5 3-5-3V5l5-3z" stroke="currentColor" strokeWidth="1.1" />
@@ -56,6 +62,7 @@ const PRIMARY: NavItem[] = [
   { href: "/analytics", label: "Analytics", icon: Icon.chart },
   { href: "/dataset", label: "Dataset", icon: Icon.dataset },
   { href: "/operations", label: "Operator insights", icon: Icon.user },
+  { href: "/asku", label: "ASKU assistant", icon: Icon.ask },
 ];
 
 export default function Sidebar({
