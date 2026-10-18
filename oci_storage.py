@@ -81,10 +81,10 @@ def download_image(key: str) -> bytes | None:
     """Fetches the stored object's bytes, or None if not configured, the object
     is missing, or the fetch failed -- never raises.
 
-    Used by backfill_event_embeddings.py, which re-reads already-stored event
-    photos to embed them. A None means "cannot be embedded now", which that
-    script reports and skips rather than treating as fatal, same
-    degraded-by-default posture as the uploads above.
+    Used wherever an already-stored event photo has to be read back to embed
+    it: backfill_event_embeddings.py, which skips and reports a None rather
+    than treating it as fatal, and POST /products/{id}/reference-image, which
+    turns a None into a 502 because that is a captain-facing action.
     """
     config = _load_config()
     if config is None:

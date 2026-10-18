@@ -320,7 +320,6 @@
     border-radius: 3px; padding: 1px 4px;
   }
   .audit-caveat { color: var(--muted) !important; font-size: 12px !important; }
-  .audit-followups p { font-size: 12px; line-height: 1.55; color: var(--muted); margin: 0; }
   .audit-cluster {
     border: 1px solid var(--gridline); border-radius: 6px;
     padding: 14px; margin-bottom: 14px; background: var(--plane);

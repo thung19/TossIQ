@@ -16,9 +16,6 @@ const EMPTY = { name: '', supplier: '', sku: '', material: '', cost: '' };
  * browser never has to re-read a short-lived presigned URL. `prefill` is read
  * once, when the form mounts; render a new instance (a different React `key`)
  * to fill it in differently.
- *
- * `products` is optional: omit it to render just the form, without the catalog
- * table underneath.
  */
 export default function CatalogForm({ products, onAdded, title = 'Add catalog item', prefill }) {
   // Two instances of this form can be mounted at once (the dashboard's and one
@@ -109,29 +106,27 @@ export default function CatalogForm({ products, onAdded, title = 'Add catalog it
         </div>
       ) : null}
       <div className={`status-msg ${status.kind}`.trim()}>{status.text}</div>
-      {products ? (
-        <table>
-          <tbody>
-            {products.length === 0 ? (
-              <tr>
-                <td className="empty" colSpan={3}>
-                  No catalog items yet
+      <table>
+        <tbody>
+          {products.length === 0 ? (
+            <tr>
+              <td className="empty" colSpan={3}>
+                No catalog items yet
+              </td>
+            </tr>
+          ) : (
+            products.map((p) => (
+              <tr key={p.product_id}>
+                <td>{p.product_name}</td>
+                <td>{p.supplier}</td>
+                <td className="num">
+                  {p.unit_cost !== null ? `$${Number(p.unit_cost).toFixed(2)}` : ''}
                 </td>
               </tr>
-            ) : (
-              products.map((p) => (
-                <tr key={p.product_id}>
-                  <td>{p.product_name}</td>
-                  <td>{p.supplier}</td>
-                  <td className="num">
-                    {p.unit_cost !== null ? `$${Number(p.unit_cost).toFixed(2)}` : ''}
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      ) : null}
+            ))
+          )}
+        </tbody>
+      </table>
     </div>
   );
 }

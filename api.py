@@ -167,8 +167,10 @@ def _persist_advanced_result(
     # The item photo's embedding is computed on this path unconditionally --
     # it is stored on the event (visual memory), so it is worth having even
     # when no catalog product has a reference image to match against. This is
-    # the asynchronous advanced-analysis path only; /sort's fast path never
-    # calls it, so physical sorting gains no dependency on an embedding call.
+    # the advanced-analysis path: /sort reaches it in a background task, while
+    # /classify runs it inside the request, so the Identify Item page now
+    # always waits on an embedding round trip. /sort's fast path never calls
+    # it, so physical sorting gains no dependency on an embedding call.
     # embed_image never raises and returns None on failure, in which case the
     # event still persists with a NULL embedding.
     embedding = image_embed.embed_image(image)

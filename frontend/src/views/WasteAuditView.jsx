@@ -86,7 +86,7 @@ export default function WasteAuditView({ hidden, products, onProductAdded }) {
         <h2>
           Unidentified item groups
           {report
-            ? ` — ${clusters.length} group${clusters.length === 1 ? '' : 's'} across ${
+            ? ` — ${clusters.length} group${clusters.length === 1 ? '' : 's'} across the most recent ${
                 report.unmatched_events
               } unmatched events`
             : ''}
@@ -104,7 +104,7 @@ export default function WasteAuditView({ hidden, products, onProductAdded }) {
           <div className="empty">
             {report.unmatched_events === 0
               ? `No disposal events in the last ${report.window_days} days are both unmatched and carry an image embedding, so there is nothing to group yet.`
-              : `${report.unmatched_events} unmatched event(s) in the last ${report.window_days} days, but no two were visually alike enough to group. Nothing is being thrown away repeatedly and unrecognised yet.`}
+              : `The most recent ${report.unmatched_events} unmatched event(s) in the last ${report.window_days} days were compared, but no two were visually alike enough to group. Nothing is being thrown away repeatedly and unrecognised yet.`}
           </div>
         ) : null}
 
@@ -168,6 +168,7 @@ export default function WasteAuditView({ hidden, products, onProductAdded }) {
                 <CatalogForm
                   key={`teach-${cluster.representative_event_id}`}
                   title="Teach TossIQ this item"
+                  products={products}
                   onAdded={onProductAdded}
                   prefill={{
                     fields: {
@@ -184,37 +185,6 @@ export default function WasteAuditView({ hidden, products, onProductAdded }) {
         })}
       </div>
 
-      <div className="panel audit-followups">
-        <h2>Not built here</h2>
-        <p>
-          Deliberately out of scope for this view: flagging disagreement between the fast and
-          advanced models, contamination and material-grade tracking, embedding items on the fast
-          sort path, and creating catalog entries automatically. A group is only ever a suggestion;
-          a person adds the product.
-        </p>
-      </div>
-
-      {/* Catalog table alongside, so it's visible what is already known and a
-          newly taught item shows up without leaving the view. */}
-      <div className="panel">
-        <h2>Catalog ({products.length})</h2>
-        <table>
-          <tbody>
-            {products.length === 0 ? (
-              <tr>
-                <td className="empty">No catalog items yet</td>
-              </tr>
-            ) : (
-              products.map((p) => (
-                <tr key={p.product_id}>
-                  <td>{p.product_name}</td>
-                  <td>{p.material}</td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
     </div>
   );
 }

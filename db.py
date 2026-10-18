@@ -282,6 +282,9 @@ def find_similar_events(event_id: int, limit: int = 6) -> list[dict]:
     by self-join rather than passed in, so no re-embedding is needed. The
     `distance` is returned with each row because the UI shows it.
 
+    Only disposals captured before the subject event are considered, so what
+    comes back is its history rather than whatever was thrown away after it.
+
     Unlike match_product_by_image there is no distance ceiling here: this is a
     nearest-neighbour browse, so the caller sees the closest matches and how
     close they actually are rather than an empty result. Events with no stored
@@ -309,7 +312,7 @@ def find_similar_events(event_id: int, limit: int = 6) -> list[dict]:
             WHERE subject.event_id = :event_id
               AND subject.image_embedding IS NOT NULL
               AND other.image_embedding IS NOT NULL
-              AND other.event_id <> :event_id
+              AND other.created_at < subject.created_at
             ORDER BY distance
             FETCH FIRST :limit ROWS ONLY
             """,
