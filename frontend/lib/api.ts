@@ -228,14 +228,3 @@ export type FleetSummary = {
   stale_minutes: number;
   service_threshold_percent: number;
 };
-
-export async function apiPost<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-    cache: "no-store",
-  });
-  if (!res.ok) throw new Error(`${path} → ${res.status}`);
-  return res.json() as Promise<T>;
-}
