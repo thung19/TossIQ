@@ -39,6 +39,9 @@ export default function App() {
         />
         <Sidebar activeView={activeView} onNavigate={navigate} open={sidebarOpen} />
 
+        {/* Every view stays mounted and is toggled with `hidden`, matching the
+            pre-React shell. Unmounting would discard in-progress local state
+            (a half-filled catalog form, a status message) on navigation. */}
         <main className="main-content">
           <DashboardView
             hidden={activeView !== 'dashboard'}
