@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
+import { apiFetch, type Building } from "../../lib/api";
 
 type NavItem = {
   href: string;
@@ -50,6 +52,17 @@ const Icon = {
       <rect x="3" y="3" width="10" height="10" rx="1" stroke="currentColor" strokeWidth="1.1" />
     </svg>
   ),
+  pin: (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path
+        d="M8 14s4.2-4.3 4.2-7.3A4.2 4.2 0 008 2.5a4.2 4.2 0 00-4.2 4.2C3.8 9.7 8 14 8 14z"
+        stroke="currentColor"
+        strokeWidth="1.1"
+        strokeLinejoin="round"
+      />
+      <circle cx="8" cy="6.6" r="1.5" stroke="currentColor" strokeWidth="1.1" />
+    </svg>
+  ),
   dot: (color: string, filled = true) => (
     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
       <circle cx="8" cy="8" r="4" stroke={color} strokeWidth="1.2" fill={filled ? color : "none"} />
@@ -59,6 +72,7 @@ const Icon = {
 
 const PRIMARY: NavItem[] = [
   { href: "/", label: "Live sorting", icon: Icon.camera },
+  { href: "/map", label: "Campus map", icon: Icon.pin },
   { href: "/analytics", label: "Analytics", icon: Icon.chart },
   { href: "/dataset", label: "Dataset", icon: Icon.dataset },
   { href: "/operations", label: "Operator insights", icon: Icon.user },
@@ -73,6 +87,25 @@ export default function Sidebar({
   lastInferenceMs: number | null;
 }) {
   const pathname = usePathname();
+  // The buildings a can fleet is actually installed in, rather than an
+  // invented favorites list. Fetched once rather than polled: a building is
+  // added far less often than a can changes status.
+  const [buildings, setBuildings] = useState<Building[]>([]);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const rows = await apiFetch<Building[]>("/buildings");
+        if (alive) setBuildings(rows.filter((b) => b.can_count > 0).slice(0, 6));
+      } catch {
+        /* backend may be booting; the list simply stays empty */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   return (
     <aside className="sidebar">
@@ -109,23 +142,19 @@ export default function Sidebar({
         </div>
       </nav>
 
-      <div className="group-label">favorites</div>
+      <div className="group-label">buildings</div>
       <nav className="nav-group">
-        <div className="nav-row static">
-          <span className="rail" />
-          <span className="nav-icon">{Icon.dot("#f5c842", false)}</span>
-          <span className="nav-label">Dining Hall East</span>
-        </div>
-        <div className="nav-row static">
-          <span className="rail" />
-          <span className="nav-icon">{Icon.dot("#10b981", true)}</span>
-          <span className="nav-label">Warehouse A</span>
-        </div>
-        <div className="nav-row static">
-          <span className="rail" />
-          <span className="nav-icon">{Icon.dot("#62666d", false)}</span>
-          <span className="nav-label">Office floor 3</span>
-        </div>
+        {buildings.length === 0 && <div className="nav-row static empty">no buildings registered</div>}
+        {buildings.map((building) => (
+          <div key={building.building_id} className="nav-row static" title={building.campus_area ?? undefined}>
+            <span className="rail" />
+            <span className="nav-icon">
+              {Icon.dot(building.can_count > 0 ? "var(--status-done)" : "var(--text-dim)", building.can_count > 0)}
+            </span>
+            <span className="nav-label">{building.name}</span>
+            <span className="nav-count">{building.can_count}</span>
+          </div>
+        ))}
       </nav>
 
       <div className="sidebar-footer">
@@ -179,7 +208,7 @@ export default function Sidebar({
         .nav-row {
           position: relative;
           display: grid;
-          grid-template-columns: 2px 16px 1fr;
+          grid-template-columns: 2px 16px 1fr auto;
           align-items: center;
           column-gap: 10px;
           padding: 5px 12px 5px 0;
@@ -228,6 +257,19 @@ export default function Sidebar({
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
+        }
+        .nav-count {
+          font-family: ui-monospace, Menlo, monospace;
+          font-size: 10px;
+          color: var(--text-dim);
+          font-variant-numeric: tabular-nums;
+          padding-right: 2px;
+        }
+        .nav-row.empty {
+          grid-template-columns: 2px 1fr;
+          font-size: 11px;
+          color: var(--text-dim);
+          padding-left: 0;
         }
         .group-label {
           font-family: ui-monospace, Menlo, monospace;

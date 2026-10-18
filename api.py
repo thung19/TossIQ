@@ -12,8 +12,10 @@ Two sorting entry points, matching the PRD's two-layer architecture:
 POST /asku answers a plain-language question about the logged analytics with
 an OCI Generative AI chat model that is shown only those aggregates (asku.py).
 
-Everything else (catalog, dashboard stats, recommendations) is plain CRUD/
-aggregation over the OCI-backed tables in db.py (Layer 3).
+Everything else (catalog, dashboard stats, campus-fleet inventory,
+recommendations) is plain CRUD/aggregation over the OCI-backed tables in db.py
+(Layer 3). The fleet routes delegate status and fill derivation to fleet.py so
+the map's pin colours come from one place.
 
 GET / serves the dashboard (static/index.html) -- a live view over the
 same stats/recommendations/products endpoints below.
@@ -49,6 +51,7 @@ from pydantic import BaseModel, StringConstraints
 
 import asku
 import db
+import fleet
 import image_embed
 import insights
 import oci_storage
@@ -90,12 +93,19 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="TossIQ Classification API", lifespan=lifespan)
 
 # The Linear-styled frontend (frontend/) runs on a separate dev server
-# (next dev on :3000) and calls these endpoints cross-origin.
+# (next dev on :3000) and calls these endpoints cross-origin. `next dev` walks
+# forward to :3001/:3002 when 3000 is already taken -- the same port-collision
+# problem run_api.py handles for the API side -- so those are allowed too,
+# otherwise the dashboard silently loads with no data on a busy machine.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+        "http://localhost:3002",
+        "http://127.0.0.1:3002",
     ],
     allow_methods=["*"],
     allow_headers=["*"],
@@ -150,6 +160,14 @@ class ProductIn(BaseModel):
     sku: str | None = None
     material: str | None = None
     unit_cost: float | None = None
+
+
+class ServiceEventIn(BaseModel):
+    """A technician's visit to a can. 'emptied' is the one that resets derived
+    fill, since fill is counted from disposals since the last emptying."""
+    service_type: str
+    performed_by: str | None = None
+    notes: str | None = None
 
 
 @app.get("/health")
@@ -437,6 +455,87 @@ def get_events_recent(limit: int = 20):
         image_key = event.pop("image_key", None)
         event["image_url"] = oci_storage.get_presigned_url(image_key) if image_key else None
     return events
+
+
+# ---------------------------------------------------------------------------
+# Campus fleet -- the can map (Experience 4, physical-unit view)
+# ---------------------------------------------------------------------------
+# Status and fill are resolved in fleet.py, never here and never in the
+# frontend: these routes hand the client the already-derived status plus the
+# reasons behind it, so retuning a threshold does not require a UI change.
+
+@app.get("/cans")
+def get_cans(
+    status: str | None = None,
+    building_id: int | None = None,
+    model_id: int | None = None,
+    stream: int | None = None,
+):
+    """The map's single payload: every active can with its resolved status,
+    fill, model, building, and position."""
+    return fleet.list_fleet(status=status, building_id=building_id, model_id=model_id, stream=stream)
+
+
+@app.get("/cans/{can_id}")
+def get_can(can_id: int):
+    can = fleet.get_can_detail(can_id)
+    if can is None:
+        raise HTTPException(status_code=404, detail=f"Can {can_id} not found")
+    return can
+
+
+@app.get("/cans/{can_id}/contents")
+def get_can_contents(can_id: int, days: int = 30):
+    """What one can currently contains, scoped to disposals since it was last
+    emptied. Event image_keys are presigned here, same as /events/recent, so
+    the frontend's existing filmstrip can be reused unchanged."""
+    contents = db.can_contents(can_id, days=days)
+    for event in contents["events"]:
+        image_key = event.pop("image_key", None)
+        event["image_url"] = oci_storage.get_presigned_url(image_key) if image_key else None
+    return contents
+
+
+@app.post("/cans/{can_id}/service")
+def record_can_service(can_id: int, service: ServiceEventIn):
+    """Records an emptying or repair, which is what makes "needs service"
+    actionable: an 'emptied' event moves the derived-fill window forward, so a
+    real can drops off the service list on its next read."""
+    if service.service_type not in fleet.SERVICE_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown service_type {service.service_type!r}; expected one of {list(fleet.SERVICE_TYPES)}",
+        )
+    # Cheap existence check -- get_can_detail would also pull the reading tail
+    # and service history, which this guard does not need and which the
+    # response below fetches once anyway.
+    if not db.list_can_rows(can_id=can_id):
+        raise HTTPException(status_code=404, detail=f"Can {can_id} not found")
+
+    service_id = db.insert_service_event(
+        can_id=can_id,
+        service_type=service.service_type,
+        performed_by=service.performed_by,
+        notes=service.notes,
+    )
+    return {"service_id": service_id, "can": fleet.get_can_detail(can_id)}
+
+
+@app.get("/can-models")
+def get_can_models():
+    return db.list_can_models()
+
+
+@app.get("/buildings")
+def get_buildings():
+    return db.list_buildings()
+
+
+@app.get("/fleet/summary")
+def get_fleet_summary():
+    """Counts by status for the map's KPI row, plus the thresholds those counts
+    were derived against."""
+    return fleet.fleet_summary()
 
 
 # ---------------------------------------------------------------------------
