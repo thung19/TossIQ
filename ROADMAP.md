@@ -27,6 +27,19 @@ user system), PDF export (CSV covers the real need), a fabricated
 multi-facility/device hierarchy (no real device fleet exists), bin-fullness
 hardware simulation presented as real sensor data.
 
+## Frontend architecture
+
+Stages 1-2 were built as a single static HTML/CSS/vanilla-JS file served
+directly by FastAPI's `StaticFiles` mount -- no build step, no Node
+dependency. After stage 2, the captain decided to switch to React for the
+remaining stages (better suited to ASKU's chat interface and procurement
+upload's multi-step flow). Stage 2.5 migrates the existing vanilla-JS
+dashboard/sidebar/hazard-workflow work into React as a foundation; stages
+3+ are built as React from there. FastAPI continues serving the built
+static output (`npm run build`'s output directory) via the same
+`StaticFiles` mount -- the backend's role doesn't change, only how the
+frontend is authored and built.
+
 ## Stages
 
 1. **Sidebar navigation shell** -- restructure the single-page dashboard into
@@ -34,6 +47,10 @@ hardware simulation presented as real sensor data.
    / Management / Reports), wiring in what already exists as the first pages.
 2. **Hazard review workflow** -- acknowledge/resolve states and an incident
    list view, built on the hazard-flag field.
+2.5. **React migration** -- set up a Vite + React build, port the existing
+   sidebar/Dashboard/Hazard Detection views and all working functionality
+   (charts, polling, forms) into React components with zero behavior loss,
+   wire FastAPI to serve the built output. Foundational for every stage below.
 3. **Identify Item page** -- dedicated drag-and-drop/file-picker upload page
    reusing the existing `/classify` pipeline.
 4. **Procurement upload + matching** -- CSV upload, vendor/product parsing,
