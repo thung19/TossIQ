@@ -298,3 +298,211 @@ export function canCountsForBucket(
   }
   return totals;
 }
+
+
+// --- Analytics ----------------------------------------------------------
+// Every figure named `estimated_*` is modelled, not measured. There are no
+// weight sensors on any can, so all mass is (items x catalog reference mass);
+// cost is the catalog's loss-on-discard, which is 0.00 for consumed residue
+// like peels and spent grounds. `matched_count` and the two cost-provenance
+// fields say how much of a total rests on a specific product match rather
+// than on the average across a vision label's variants.
+
+export type Measures = {
+  count: number;
+  matched_count: number;
+  estimated_cost: number;
+  estimated_grams: number;
+  estimated_kg: number;
+  cost_from_matched: number;
+  cost_from_class_average: number;
+  no_cost_items: number;
+  avg_confidence: number | null;
+};
+
+export type Bucket = Measures & { bucket: string; share?: number };
+
+export type AnalyticsOverview = Measures & {
+  total_items: number;
+  by_category: (Measures & { category: string })[];
+  diverted_items: number;
+  diversion_rate: number;
+  catalog_match_rate: number;
+  estimate_notes: { mass: string; cost: string; unmatched: string };
+};
+
+export type AnalyticsDistribution = {
+  dimension: string;
+  rows: Bucket[];
+  shown_count: number;
+  total_count: number;
+  truncated: boolean;
+};
+
+export type AnalyticsHotspots = {
+  by_building: Bucket[];
+  by_campus_area: Bucket[];
+  by_can: Bucket[];
+};
+
+export type BinComposition = {
+  can_id: number;
+  can_code: string;
+  building_name: string | null;
+  shown_items: number;
+  items: { item: string; category: string; count: number; estimated_cost: number }[];
+};
+
+export type MisroutedReport = {
+  rows: {
+    item: string;
+    logged_as: string;
+    should_be: string;
+    count: number;
+    grams: number;
+    estimated_kg: number;
+  }[];
+  misrouted_count: number;
+  total_items: number;
+  misrouted_rate: number;
+  note: string;
+};
+
+export type AccuracyReport = {
+  reviewed_events: number;
+  total_events: number;
+  review_coverage: number;
+  correct: number;
+  /** null when nothing in scope has been reviewed -- not zero, which would
+   * read as "the classifier got everything wrong". */
+  accuracy: number | null;
+  by_category: { category: string; reviewed: number; correct: number; accuracy: number }[];
+  calibration: {
+    label: string;
+    lower: number;
+    reviewed: number;
+    correct: number;
+    accuracy: number | null;
+  }[];
+  unscored_reviews: number;
+  confusions: { seen_as: string; actually_was: string; count: number }[];
+  note: string;
+};
+
+export type CatalogSku = Measures & {
+  sku: string;
+  product_name: string | null;
+  brand: string | null;
+  variant_label: string | null;
+  supplier: string | null;
+  material: string | null;
+  material_subtype: string | null;
+  unit_cost: number | null;
+  unit_weight_grams: number | null;
+  intended_stream: string | null;
+  recyclable: number | null;
+  case_pack_qty: number | null;
+  case_cost: number | null;
+  cases_equivalent: number | null;
+};
+
+export type CatalogRollup = {
+  skus: CatalogSku[];
+  by_supplier: Bucket[];
+  catalog_size: number;
+};
+
+export type AnalyticsFilterOptions = {
+  categories: string[];
+  materials: string[];
+  objects: string[];
+  suppliers: string[];
+};
+
+/** The filter set every /analytics/* route accepts. Kept as one object so the
+ * page narrows together: a building chosen once applies to the composition,
+ * the hotspots, the supplies table and the accuracy sample alike. */
+export type AnalyticsFilterState = {
+  days: number;
+  buildingId: string;
+  canId: string;
+  category: string;
+  material: string;
+  detectedObject: string;
+  supplier: string;
+};
+
+export const EMPTY_ANALYTICS_FILTERS: AnalyticsFilterState = {
+  days: 30,
+  buildingId: "",
+  canId: "",
+  category: "",
+  material: "",
+  detectedObject: "",
+  supplier: "",
+};
+
+/** Serialises the filter state into the query string the API expects. Only
+ * set values are sent, so an unfiltered request stays readable in the log. */
+export function analyticsQuery(
+  filters: AnalyticsFilterState,
+  extra: Record<string, string | number | undefined> = {}
+): string {
+  const params = new URLSearchParams();
+  params.set("days", String(filters.days));
+  if (filters.buildingId) params.set("building_id", filters.buildingId);
+  if (filters.canId) params.set("can_id", filters.canId);
+  if (filters.category) params.set("category", filters.category);
+  if (filters.material) params.set("material", filters.material);
+  if (filters.detectedObject) params.set("detected_object", filters.detectedObject);
+  if (filters.supplier) params.set("supplier", filters.supplier);
+  for (const [key, value] of Object.entries(extra)) {
+    if (value !== undefined && value !== "") params.set(key, String(value));
+  }
+  return `?${params.toString()}`;
+}
+
+/** How many filters beyond the time window are active -- drives the "clear"
+ * affordance and the count badge. */
+export function activeAnalyticsFilterCount(filters: AnalyticsFilterState): number {
+  return [
+    filters.buildingId,
+    filters.canId,
+    filters.category,
+    filters.material,
+    filters.detectedObject,
+    filters.supplier,
+  ].filter(Boolean).length;
+}
+
+/** The three ways every distribution can be measured. Items is counted;
+ * the other two are catalog estimates, which the UI labels wherever it
+ * shows them. */
+export type Measure = "count" | "cost" | "mass";
+
+export const MEASURE_LABEL: Record<Measure, string> = {
+  count: "items",
+  cost: "est. cost",
+  mass: "est. mass",
+};
+
+export function measureValue(row: Measures, measure: Measure): number {
+  if (measure === "cost") return row.estimated_cost;
+  if (measure === "mass") return row.estimated_kg;
+  return row.count;
+}
+
+export function formatMeasure(value: number, measure: Measure): string {
+  if (measure === "cost") {
+    return `$${value.toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+  }
+  if (measure === "mass") {
+    return value >= 1
+      ? `${value.toLocaleString(undefined, { maximumFractionDigits: 1 })} kg`
+      : `${Math.round(value * 1000)} g`;
+  }
+  return value.toLocaleString();
+}

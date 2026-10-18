@@ -220,7 +220,13 @@ class CameraService:
             db.insert_waste_event(
                 detected_object=d["label"],
                 category=d["category"],
-                confidence=round(d["confidence"], 4),
+                # WASTE_EVENTS.CONFIDENCE is a percentage: api.py's advanced
+                # path writes 0-100 into the same column, and the dashboard
+                # and the analytics accuracy view read it as one. The detector
+                # reports a 0-1 score, so it is scaled here rather than
+                # leaving two different units in one column -- which is what
+                # it was doing, making every aggregate over it meaningless.
+                confidence=round(d["confidence"] * 100, 2),
                 location="live-webcam",
                 bin_id=db.can_id_for_code(can_code) if can_code else None,
             )

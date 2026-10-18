@@ -65,12 +65,27 @@ def add_product(product_name, supplier=None, sku=None, material=None, unit_cost=
 
 
 def list_products() -> list[dict]:
+    """The full catalog row, including the cost/mass/variant detail schema 002
+    added. UNIT_WEIGHT_GRAMS is a catalog reference mass, never a measurement
+    -- no can has a weight sensor."""
     with get_connection() as conn, conn.cursor() as cursor:
         cursor.execute(
-            "SELECT product_id, product_name, supplier, sku, material, unit_cost FROM products ORDER BY product_name"
+            """
+            SELECT product_id, product_name, brand, variant_label, supplier, sku,
+                   detected_as, material, material_subtype, unit_cost,
+                   unit_weight_grams, disposal_category, recyclable, reusable,
+                   case_pack_qty, case_cost, active
+            FROM products
+            ORDER BY product_name
+            """
         )
         cols = [d[0].lower() for d in cursor.description]
-        return [dict(zip(cols, row)) for row in cursor.fetchall()]
+        rows = [dict(zip(cols, row)) for row in cursor.fetchall()]
+        for row in rows:
+            for key in ("unit_cost", "unit_weight_grams", "case_cost"):
+                if row[key] is not None:
+                    row[key] = float(row[key])
+        return rows
 
 
 _STOPWORDS = {"the", "a", "an", "of", "and", "or", "for", "with", "disposable", "item"}
@@ -286,6 +301,165 @@ def list_recent_events(limit: int = 20) -> list[dict]:
         return rows
 
 
+
+# ---------------------------------------------------------------------------
+# Catalog detail and review trail (used by seed_catalog.py and analytics.py)
+# ---------------------------------------------------------------------------
+
+def product_id_for_sku(sku: str) -> int | None:
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute("SELECT product_id FROM products WHERE sku = :sku", sku=sku)
+        row = cursor.fetchone()
+        return row[0] if row else None
+
+
+def upsert_product_by_sku(sku: str, **columns) -> int:
+    """Insert-or-skip on SKU, returning the product_id.
+
+    Mirrors _upsert's contract for the fleet tables: an existing row is left
+    untouched, so a price someone corrected by hand survives a re-seed.
+    """
+    return _upsert("products", "sku", sku, columns, "product_id")
+
+
+
+def fill_null_product_columns(sku: str, columns: dict) -> int:
+    """Sets the given columns on one product, but only where they are NULL.
+
+    "Only where NULL" is the whole point: this completes a row that predates
+    a schema change without overwriting anything a person has since put
+    there. Returns the number of columns actually written.
+    """
+    if not columns:
+        return 0
+    allowed = {
+        "brand", "variant_label", "detected_as", "material", "material_subtype",
+        "unit_cost", "unit_weight_grams", "disposal_category", "recyclable",
+        "reusable", "case_pack_qty", "case_cost", "active",
+    }
+    unknown = set(columns) - allowed
+    if unknown:
+        raise ValueError(f"Not product columns: {sorted(unknown)}")
+
+    assignments = ", ".join(f"{name} = COALESCE({name}, :{name})" for name in columns)
+    predicate = " OR ".join(f"{name} IS NULL" for name in columns)
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            f"UPDATE products SET {assignments} WHERE sku = :sku AND ({predicate})",
+            sku=sku,
+            **columns,
+        )
+        written = cursor.rowcount and len(columns)
+        conn.commit()
+        return written or 0
+
+
+def list_unattributed_events() -> list[tuple]:
+    """(event_id, detected_object) for every event with no PRODUCT_ID yet."""
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT event_id, detected_object
+            FROM waste_events
+            WHERE product_id IS NULL
+            ORDER BY event_id
+            """
+        )
+        return cursor.fetchall()
+
+
+def set_event_product_matches(updates: list[dict]) -> int:
+    """Batch-applies {event_id, product_id, match_method} attributions.
+
+    One executemany rather than db.py's usual connection-per-call, because
+    the only caller is a seed with a few thousand rows to write and a
+    per-row connection would cost minutes against OCI (same reasoning as
+    seed_campus._insert_batch).
+    """
+    if not updates:
+        return 0
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.executemany(
+            """
+            UPDATE waste_events
+               SET product_id = :product_id, match_method = :match_method
+             WHERE event_id = :event_id
+            """,
+            updates,
+        )
+        conn.commit()
+    return len(updates)
+
+
+
+def normalize_confidence_scale() -> int:
+    """Rescales CONFIDENCE values stored on a 0-1 scale to the 0-100 the
+    column is documented to hold.
+
+    Two writers disagreed: camera_service.py persisted the detector's raw
+    0-1 score while api.py's advanced path wrote 0-100 (see its
+    CONFIDENCE_FULL constants), so any average over the column mixed units
+    and every accuracy figure derived from it was wrong. camera_service.py
+    now scales on write; this repairs the rows written before it did.
+
+    A value of exactly 1.0 is ambiguous -- it could be a certain 0-1 score or
+    a 1% confidence -- and is left alone rather than guessed at. In practice
+    neither writer emits it: the detector clamps below 1.0 and the advanced
+    path's lowest constant is 20.
+    """
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE waste_events
+               SET confidence = ROUND(confidence * 100, 2)
+             WHERE confidence IS NOT NULL AND confidence < 1
+            """
+        )
+        updated = cursor.rowcount
+        conn.commit()
+        return updated
+
+
+def list_unreviewed_events() -> list[tuple]:
+    """(event_id, detected_object, category, confidence, created_at) for events
+    nobody has reviewed yet."""
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT we.event_id, we.detected_object, we.category, we.confidence, we.created_at
+            FROM waste_events we
+            WHERE NOT EXISTS (
+                SELECT 1 FROM event_reviews r WHERE r.event_id = we.event_id
+            )
+            ORDER BY we.event_id
+            """
+        )
+        return cursor.fetchall()
+
+
+def insert_event_reviews(rows: list[dict]) -> int:
+    if not rows:
+        return 0
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.executemany(
+            """
+            INSERT INTO event_reviews
+                (event_id, verdict, corrected_category, corrected_object, reviewer, reviewed_at, notes)
+            VALUES
+                (:event_id, :verdict, :corrected_category, :corrected_object, :reviewer, :reviewed_at, :notes)
+            """,
+            rows,
+        )
+        conn.commit()
+    return len(rows)
+
+
+def count_event_reviews() -> int:
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute("SELECT COUNT(*) FROM event_reviews")
+        return cursor.fetchone()[0]
+
+
 # ---------------------------------------------------------------------------
 # Dashboard queries (Experience 4)
 # ---------------------------------------------------------------------------
@@ -418,6 +592,381 @@ def stats_locations(days: int = 30) -> list[dict]:
         )
         rows = [{"location": r[0], "category": r[1] or "unknown", "count": r[2]} for r in cursor.fetchall()]
         return rows
+
+
+
+# ---------------------------------------------------------------------------
+# Analytics queries (the analytics page)
+# ---------------------------------------------------------------------------
+# One join shape serves every question the page asks, so a filter written once
+# applies to all of them: a disposal event, the catalog product it was matched
+# to, and the can and building it was thrown into.
+#
+# LABEL_AVG is what makes a cost or mass figure available for an event that
+# was never matched to a specific product. The catalog knows what a "plastic
+# water bottle" costs on average even when it cannot say which bottle this
+# was, and reporting that average -- flagged as a class estimate rather than a
+# product match -- is more useful than reporting nothing. Events whose label
+# the catalog does not cover at all contribute to neither total and are
+# counted separately, so the unknown share is always visible.
+
+_ANALYTICS_FROM = """
+FROM waste_events we
+LEFT JOIN products p  ON p.product_id = we.product_id
+LEFT JOIN cans c      ON c.can_id = we.bin_id
+LEFT JOIN buildings b ON b.building_id = c.building_id
+LEFT JOIN label_avg la ON la.detected_as = we.detected_object
+"""
+
+_LABEL_AVG_CTE = """
+WITH label_avg AS (
+    SELECT detected_as,
+           AVG(unit_cost) AS avg_cost,
+           AVG(unit_weight_grams) AS avg_grams
+    FROM products
+    WHERE active = 1 AND detected_as IS NOT NULL
+    GROUP BY detected_as
+)
+"""
+
+# The measure columns every grouped analytics query selects. Kept in one place
+# so a cost total means the same thing on every tab of the page.
+_ANALYTICS_MEASURES = """
+    COUNT(*) AS n,
+    COUNT(we.product_id) AS matched_n,
+    SUM(CASE WHEN p.unit_cost IS NOT NULL THEN p.unit_cost ELSE 0 END) AS matched_cost,
+    SUM(CASE WHEN p.unit_weight_grams IS NOT NULL THEN p.unit_weight_grams ELSE 0 END) AS matched_grams,
+    SUM(CASE WHEN p.unit_cost IS NULL AND la.avg_cost IS NOT NULL THEN la.avg_cost ELSE 0 END) AS class_cost,
+    SUM(CASE WHEN p.unit_weight_grams IS NULL AND la.avg_grams IS NOT NULL THEN la.avg_grams ELSE 0 END) AS class_grams,
+    SUM(CASE WHEN COALESCE(p.unit_cost, la.avg_cost) IS NULL THEN 1 ELSE 0 END) AS no_cost_n,
+    AVG(we.confidence) AS avg_confidence
+"""
+
+# Whitelisted grouping expressions. The dimension arrives from the query
+# string, so it selects a key from this map and is never interpolated -- an
+# unknown dimension raises rather than reaching the SQL.
+ANALYTICS_DIMENSIONS = {
+    "category":         "COALESCE(we.category, 'unknown')",
+    "material":         "COALESCE(p.material, we.material, 'unknown')",
+    "material_subtype": "COALESCE(p.material_subtype, we.material_subtype, 'unspecified')",
+    "object":           "COALESCE(we.detected_object, 'unidentified')",
+    "product":          "COALESCE(p.product_name, 'no catalog match')",
+    # TRIM matters: Oracle concatenates NULL as empty, so a product with no
+    # brand or variant would bucket as a bare space rather than falling
+    # through to its name. An empty string is NULL in Oracle, so the TRIM
+    # lets COALESCE do its job.
+    "variant":          "COALESCE(TRIM(p.brand || ' ' || p.variant_label), p.product_name, 'no catalog match')",
+    "brand":            "COALESCE(p.brand, 'unbranded or unmatched')",
+    "supplier":         "COALESCE(p.supplier, 'unknown supplier')",
+    "sku":              "COALESCE(p.sku, 'unmatched')",
+    "building":         "COALESCE(b.name, 'unattributed')",
+    "campus_area":      "COALESCE(b.campus_area, 'unattributed')",
+    "can":              "COALESCE(c.can_code, 'unattributed')",
+    "floor":            "COALESCE(c.floor, 'unspecified')",
+    "intended_stream":  "COALESCE(p.disposal_category, 'unknown')",
+    "match_method":     "COALESCE(we.match_method, 'unmatched')",
+    "hour":             "TO_CHAR(we.created_at, 'HH24')",
+    "weekday":          "TO_CHAR(TRUNC(we.created_at) - TRUNC(we.created_at, 'IW'))",
+    "day":              "TO_CHAR(we.created_at, 'YYYY-MM-DD')",
+}
+
+# Dimensions whose natural order is their own, not their size. A date series
+# sorted by volume is not a time series -- it is a leaderboard with dates for
+# labels, and reading a trend off it is impossible. The string forms above are
+# all zero-padded so a lexical sort is also the chronological one.
+ORDERED_DIMENSIONS = {"hour", "weekday", "day"}
+
+
+def _analytics_filters(
+    days: int | None,
+    building_id: int | None,
+    can_id: int | None,
+    category: str | None,
+    material: str | None,
+    detected_object: str | None,
+    supplier: str | None,
+) -> tuple[str, dict]:
+    """Builds the shared WHERE fragment and its bind values.
+
+    Every clause is a bind, never interpolated text, so a filter value that
+    happens to contain a quote is data rather than SQL.
+    """
+    clauses = []
+    binds: dict = {}
+    if days is not None:
+        clauses.append("we.created_at >= SYSTIMESTAMP - :days")
+        binds["days"] = days
+    if building_id is not None:
+        clauses.append("c.building_id = :building_id")
+        binds["building_id"] = building_id
+    if can_id is not None:
+        clauses.append("we.bin_id = :can_id")
+        binds["can_id"] = can_id
+    if category:
+        clauses.append("we.category = :category")
+        binds["category"] = category
+    if material:
+        clauses.append("COALESCE(p.material, we.material) = :material")
+        binds["material"] = material
+    if detected_object:
+        clauses.append("we.detected_object = :detected_object")
+        binds["detected_object"] = detected_object
+    if supplier:
+        clauses.append("p.supplier = :supplier")
+        binds["supplier"] = supplier
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    return where, binds
+
+
+def analytics_distribution(
+    dimension: str,
+    days: int | None = 30,
+    building_id: int | None = None,
+    can_id: int | None = None,
+    category: str | None = None,
+    material: str | None = None,
+    detected_object: str | None = None,
+    supplier: str | None = None,
+    limit: int | None = None,
+) -> list[dict]:
+    """Counts, costs and masses grouped by one whitelisted dimension.
+
+    This single query backs every "distribution of X" view on the analytics
+    page. Serving them from one shaped query rather than a handful of
+    bespoke ones is what keeps the cost column on the supplier tab equal to
+    the cost column on the material tab for the same filters.
+    """
+    if dimension not in ANALYTICS_DIMENSIONS:
+        raise ValueError(
+            f"Unknown dimension {dimension!r}; expected one of {sorted(ANALYTICS_DIMENSIONS)}"
+        )
+    expression = ANALYTICS_DIMENSIONS[dimension]
+    where, binds = _analytics_filters(
+        days, building_id, can_id, category, material, detected_object, supplier
+    )
+
+    sql = f"""
+        {_LABEL_AVG_CTE}
+        SELECT {expression} AS bucket,
+        {_ANALYTICS_MEASURES}
+        {_ANALYTICS_FROM}
+        {where}
+        GROUP BY {expression}
+        ORDER BY {"bucket" if dimension in ORDERED_DIMENSIONS else "n DESC"}
+    """
+    if limit is not None:
+        sql += " FETCH FIRST :row_limit ROWS ONLY"
+        binds["row_limit"] = limit
+
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(sql, **binds)
+        cols = [d[0].lower() for d in cursor.description]
+        rows = [dict(zip(cols, row)) for row in cursor.fetchall()]
+        for row in rows:
+            for key in ("matched_cost", "matched_grams", "class_cost", "class_grams", "avg_confidence"):
+                row[key] = float(row[key]) if row[key] is not None else 0.0
+        return rows
+
+
+def analytics_totals(
+    days: int | None = 30,
+    building_id: int | None = None,
+    can_id: int | None = None,
+    category: str | None = None,
+    material: str | None = None,
+    detected_object: str | None = None,
+    supplier: str | None = None,
+) -> dict:
+    """The same measures with no grouping: the headline row."""
+    where, binds = _analytics_filters(
+        days, building_id, can_id, category, material, detected_object, supplier
+    )
+    sql = f"""
+        {_LABEL_AVG_CTE}
+        SELECT {_ANALYTICS_MEASURES}
+        {_ANALYTICS_FROM}
+        {where}
+    """
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(sql, **binds)
+        cols = [d[0].lower() for d in cursor.description]
+        row = dict(zip(cols, cursor.fetchone()))
+        for key in ("matched_cost", "matched_grams", "class_cost", "class_grams", "avg_confidence"):
+            row[key] = float(row[key]) if row[key] is not None else 0.0
+        return row
+
+
+def analytics_misrouted(
+    days: int | None = 30,
+    building_id: int | None = None,
+    can_id: int | None = None,
+    category: str | None = None,
+    material: str | None = None,
+    detected_object: str | None = None,
+    supplier: str | None = None,
+    limit: int = 20,
+) -> list[dict]:
+    """Items whose catalog disposal stream disagrees with the stream they were
+    actually logged into.
+
+    This is the contamination view, and it is only answerable because the
+    catalog records what each product SHOULD go in. Both sides are stored
+    facts -- the logged category and the catalog's intended stream -- so a row
+    here is a real disagreement, not a model opinion.
+    """
+    where, binds = _analytics_filters(
+        days, building_id, can_id, category, material, detected_object, supplier
+    )
+    extra = "p.disposal_category IS NOT NULL AND we.category IS NOT NULL AND p.disposal_category <> we.category"
+    where = f"{where} AND {extra}" if where else f"WHERE {extra}"
+    binds["row_limit"] = limit
+
+    sql = f"""
+        {_LABEL_AVG_CTE}
+        SELECT COALESCE(p.product_name, we.detected_object) AS item,
+               we.category AS logged_as,
+               p.disposal_category AS should_be,
+               COUNT(*) AS n,
+               SUM(CASE WHEN p.unit_weight_grams IS NOT NULL THEN p.unit_weight_grams ELSE 0 END) AS grams
+        {_ANALYTICS_FROM}
+        {where}
+        GROUP BY COALESCE(p.product_name, we.detected_object), we.category, p.disposal_category
+        ORDER BY n DESC
+        FETCH FIRST :row_limit ROWS ONLY
+    """
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(sql, **binds)
+        return [
+            {"item": r[0], "logged_as": r[1], "should_be": r[2], "count": r[3],
+             "grams": float(r[4]) if r[4] is not None else 0.0}
+            for r in cursor.fetchall()
+        ]
+
+
+def analytics_bin_composition(
+    days: int | None = 30,
+    building_id: int | None = None,
+    can_id: int | None = None,
+    category: str | None = None,
+    material: str | None = None,
+    detected_object: str | None = None,
+    supplier: str | None = None,
+    top_items_per_can: int = 5,
+) -> list[dict]:
+    """The top few items in each can: "what is usually in this bin".
+
+    Ranked inside each can with ROW_NUMBER rather than filtered globally, so a
+    quiet can still shows its own top items instead of being crowded out of a
+    campus-wide top-N by the dining halls.
+    """
+    where, binds = _analytics_filters(
+        days, building_id, can_id, category, material, detected_object, supplier
+    )
+    extra = "we.bin_id IS NOT NULL"
+    where = f"{where} AND {extra}" if where else f"WHERE {extra}"
+    binds["per_can"] = top_items_per_can
+
+    sql = f"""
+        {_LABEL_AVG_CTE}, per_can AS (
+            SELECT c.can_id, c.can_code, b.name AS building_name,
+                   COALESCE(p.product_name, we.detected_object, 'unidentified') AS item,
+                   COALESCE(we.category, 'unknown') AS category,
+                   COUNT(*) AS n,
+                   SUM(COALESCE(p.unit_cost, la.avg_cost, 0)) AS est_cost
+            {_ANALYTICS_FROM}
+            {where}
+            GROUP BY c.can_id, c.can_code, b.name,
+                     COALESCE(p.product_name, we.detected_object, 'unidentified'),
+                     COALESCE(we.category, 'unknown')
+        )
+        SELECT can_id, can_code, building_name, item, category, n, est_cost
+        FROM (
+            SELECT per_can.*,
+                   ROW_NUMBER() OVER (PARTITION BY can_id ORDER BY n DESC, item) AS rn,
+                   SUM(n) OVER (PARTITION BY can_id) AS can_total
+            FROM per_can
+        )
+        WHERE rn <= :per_can
+        ORDER BY can_total DESC, can_code, n DESC
+    """
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(sql, **binds)
+        return [
+            {"can_id": r[0], "can_code": r[1], "building_name": r[2], "item": r[3],
+             "category": r[4], "count": r[5], "estimated_cost": float(r[6]) if r[6] else 0.0}
+            for r in cursor.fetchall()
+        ]
+
+
+def analytics_review_rows(
+    days: int | None = 30,
+    building_id: int | None = None,
+    can_id: int | None = None,
+    category: str | None = None,
+    material: str | None = None,
+    detected_object: str | None = None,
+    supplier: str | None = None,
+) -> list[dict]:
+    """The latest human verdict per reviewed event, with what the model said.
+
+    Latest-per-event via ROW_NUMBER rather than a plain join: EVENT_REVIEWS is
+    append-only so a contested call can carry two verdicts, and counting both
+    would double-weight exactly the events people disagreed about.
+    """
+    where, binds = _analytics_filters(
+        days, building_id, can_id, category, material, detected_object, supplier
+    )
+    sql = f"""
+        {_LABEL_AVG_CTE}, latest AS (
+            SELECT r.*, ROW_NUMBER() OVER (
+                       PARTITION BY r.event_id ORDER BY r.reviewed_at DESC, r.review_id DESC
+                   ) AS rn
+            FROM event_reviews r
+        )
+        SELECT we.event_id, we.detected_object, we.category, we.confidence,
+               latest.verdict, latest.corrected_category, latest.corrected_object
+        {_ANALYTICS_FROM}
+        JOIN latest ON latest.event_id = we.event_id AND latest.rn = 1
+        {where}
+    """
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(sql, **binds)
+        return [
+            {"event_id": r[0], "detected_object": r[1], "category": r[2],
+             "confidence": float(r[3]) if r[3] is not None else None,
+             "verdict": r[4], "corrected_category": r[5], "corrected_object": r[6]}
+            for r in cursor.fetchall()
+        ]
+
+
+def analytics_filter_options(days: int | None = 30) -> dict:
+    """The values actually present in the window, so the filter bar never
+    offers a choice that yields an empty page."""
+    with get_connection() as conn, conn.cursor() as cursor:
+        def column(sql):
+            cursor.execute(sql, days=days)
+            return [r[0] for r in cursor.fetchall() if r[0] is not None]
+
+        return {
+            "categories": column(
+                "SELECT DISTINCT category FROM waste_events "
+                "WHERE created_at >= SYSTIMESTAMP - :days ORDER BY 1"
+            ),
+            "materials": column(
+                "SELECT DISTINCT COALESCE(p.material, we.material) FROM waste_events we "
+                "LEFT JOIN products p ON p.product_id = we.product_id "
+                "WHERE we.created_at >= SYSTIMESTAMP - :days ORDER BY 1"
+            ),
+            "objects": column(
+                "SELECT DISTINCT detected_object FROM waste_events "
+                "WHERE created_at >= SYSTIMESTAMP - :days ORDER BY 1"
+            ),
+            "suppliers": column(
+                "SELECT DISTINCT p.supplier FROM waste_events we "
+                "JOIN products p ON p.product_id = we.product_id "
+                "WHERE we.created_at >= SYSTIMESTAMP - :days ORDER BY 1"
+            ),
+        }
 
 
 # ---------------------------------------------------------------------------

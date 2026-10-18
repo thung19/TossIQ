@@ -42,13 +42,14 @@ from typing import Annotated
 import asyncio
 import time
 
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, StringConstraints
 
+import analytics
 import asku
 import db
 import fleet
@@ -543,6 +544,118 @@ def get_fleet_summary(building_id: int | None = None, model_id: int | None = Non
     were derived against. Takes the same building_id / model_id narrowing
     GET /cans takes, so the counts describe the same set of cans."""
     return fleet.fleet_summary(building_id=building_id, model_id=model_id)
+
+
+
+# ---------------------------------------------------------------------------
+# Analytics -- the waste intelligence page (Experience 4)
+# ---------------------------------------------------------------------------
+# Every route here takes the same filter set, so the whole page narrows
+# together from one filter bar. Shaping lives in analytics.py, never here and
+# never in the frontend: a cost total means the same thing on every tab
+# because exactly one function computes it.
+#
+# Costs and masses are ESTIMATES derived from the catalog. There are no weight
+# sensors on any can, so no mass this API returns is measured; the payloads
+# name every figure `estimated_*` and carry the provenance split that says how
+# much of it rests on a specific product match.
+
+class AnalyticsFilters:
+    """FastAPI dependency for the filter set shared by every analytics route."""
+
+    def __init__(
+        self,
+        days: int = 30,
+        building_id: int | None = None,
+        can_id: int | None = None,
+        category: str | None = None,
+        material: str | None = None,
+        detected_object: str | None = None,
+        supplier: str | None = None,
+    ):
+        self.values = {
+            "days": days,
+            "building_id": building_id,
+            "can_id": can_id,
+            "category": category,
+            "material": material,
+            "detected_object": detected_object,
+            "supplier": supplier,
+        }
+
+
+@app.get("/analytics/overview")
+def get_analytics_overview(filters: AnalyticsFilters = Depends()):
+    """Headline volume, estimated cost, estimated mass, diversion and catalog
+    match rate for the filtered window."""
+    return analytics.overview(**filters.values)
+
+
+@app.get("/analytics/distribution")
+def get_analytics_distribution(
+    dimension: str = "material",
+    limit: int = 40,
+    filters: AnalyticsFilters = Depends(),
+):
+    """Counts, cost and estimated mass grouped by one dimension.
+
+    `dimension` selects a whitelisted grouping expression; an unknown value is
+    a 400 naming the valid ones rather than a 500 out of the database.
+    """
+    try:
+        return analytics.distribution(dimension, limit=limit, **filters.values)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/analytics/dimensions")
+def get_analytics_dimensions():
+    """The dimensions /analytics/distribution will group by, so the UI's
+    selector is driven by the server rather than a duplicated list."""
+    return sorted(db.ANALYTICS_DIMENSIONS)
+
+
+@app.get("/analytics/hotspots")
+def get_analytics_hotspots(limit: int = 15, filters: AnalyticsFilters = Depends()):
+    """Where the volume is: by building, campus area and can."""
+    return analytics.hotspots(limit=limit, **filters.values)
+
+
+@app.get("/analytics/bins")
+def get_analytics_bins(top_items_per_can: int = 5, filters: AnalyticsFilters = Depends()):
+    """What is usually in each can."""
+    return analytics.bin_composition(top_items_per_can=top_items_per_can, **filters.values)
+
+
+@app.get("/analytics/misrouted")
+def get_analytics_misrouted(limit: int = 20, filters: AnalyticsFilters = Depends()):
+    """Items logged into a stream their catalog entry disagrees with."""
+    return analytics.misrouted(limit=limit, **filters.values)
+
+
+@app.get("/analytics/accuracy")
+def get_analytics_accuracy(filters: AnalyticsFilters = Depends()):
+    """Agreement with human reviewers, with the sample size attached.
+
+    Not model confidence: that is the classifier grading itself. Confidence
+    appears here only as the axis of the calibration view, which asks whether
+    it predicts agreement.
+    """
+    return analytics.accuracy(**filters.values)
+
+
+@app.get("/analytics/catalog")
+def get_analytics_catalog(limit: int = 60, filters: AnalyticsFilters = Depends()):
+    """The supplies view: discarded units by SKU and supplier, with case-pack
+    equivalents for the purchasing conversation."""
+    return analytics.catalog_rollup(limit=limit, **filters.values)
+
+
+@app.get("/analytics/filters")
+def get_analytics_filter_options(days: int = 30):
+    """The filter values actually present in the window, so the filter bar
+    never offers a choice that yields an empty page."""
+    return db.analytics_filter_options(days=days)
 
 
 # ---------------------------------------------------------------------------

@@ -23,6 +23,7 @@ export default function UsageHeatmap({
   onBucketChange,
   windowDays,
   onWindowDaysChange,
+  selectionHint = "click a cell, day, or hour to filter the map",
 }: {
   activity: FleetActivity | null;
   /** Last fetch failure, if the panel has no data to show yet. The page keeps
@@ -32,6 +33,10 @@ export default function UsageHeatmap({
   onBucketChange: (bucket: TimeBucket) => void;
   windowDays: number;
   onWindowDaysChange: (days: number) => void;
+  /** What selecting a bucket does here. The grid is reused on the campus map,
+   * where a selection recolours the pins, and on the analytics page, where it
+   * does not -- so the hint cannot be hardcoded to either. */
+  selectionHint?: string;
 }) {
   const dayNames = activity?.day_names ?? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   const grid = activity?.day_hour ?? Array.from({ length: 7 }, () => new Array(24).fill(0));
@@ -171,7 +176,7 @@ export default function UsageHeatmap({
             showing {bucketLabel(bucket.day, bucket.hour, dayNames)} — clear
           </button>
         ) : (
-          <span className="dim hint">click a cell, day, or hour to filter the map</span>
+          <span className="dim hint">{selectionHint}</span>
         )}
       </footer>
 
