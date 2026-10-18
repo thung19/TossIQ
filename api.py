@@ -9,6 +9,9 @@ Two sorting entry points, matching the PRD's two-layer architecture:
 - POST /classify -- direct advanced-analysis path (Layer 2 only). Used for
                      testing; also persists its result.
 
+POST /asku answers a plain-language question about the logged analytics with
+an OCI Generative AI chat model that is shown only those aggregates (asku.py).
+
 Everything else (catalog, dashboard stats, recommendations) is plain CRUD/
 aggregation over the OCI-backed tables in db.py (Layer 3).
 
@@ -32,6 +35,7 @@ import uuid
 
 from contextlib import asynccontextmanager
 from datetime import datetime
+from typing import Annotated
 
 import asyncio
 import time
@@ -41,8 +45,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, UnidentifiedImageError
-from pydantic import BaseModel
+from pydantic import BaseModel, StringConstraints
 
+import asku
 import db
 import image_embed
 import insights
@@ -117,6 +122,26 @@ class SortResponse(BaseModel):
     confidence: float | None = None
     needs_review: bool
     reason: str
+
+
+class AskuRequest(BaseModel):
+    question: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=2000),
+    ]
+
+
+class AskuObservationSection(BaseModel):
+    title: str
+    lines: list[str]
+
+
+class AskuResponse(BaseModel):
+    question: str
+    answer: str
+    window_days: int
+    model_id: str
+    grounding: list[AskuObservationSection]
 
 
 class ProductIn(BaseModel):
@@ -427,6 +452,26 @@ def get_recommendations(limit: int = 20):
 def generate_recommendations(days: int = 30):
     new_texts = insights.generate_recommendations(days=days)
     return {"new_recommendations": new_texts}
+
+
+# ---------------------------------------------------------------------------
+# ASKU -- grounded chat over the observed analytics above (Experience 5)
+# ---------------------------------------------------------------------------
+
+@app.post("/asku", response_model=AskuResponse)
+def ask_asku(request: AskuRequest):
+    """Answers one plain-language question from the logged analytics only.
+
+    The response carries the observation sections the answer was grounded
+    in, so the dashboard can show the operator the basis for it. An OCI
+    (database or Generative AI) failure arrives here as an asku.AskuError,
+    whose message is a fixed string; the underlying exception stays in the
+    log rather than being disclosed to the caller.
+    """
+    try:
+        return asku.answer_question(request.question)
+    except asku.AskuError as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 # ---------------------------------------------------------------------------
