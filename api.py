@@ -104,6 +104,10 @@ class ProductIn(BaseModel):
     unit_cost: float | None = None
 
 
+class HazardStatusIn(BaseModel):
+    status: str
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -382,13 +386,36 @@ def get_stats_locations(days: int = 30):
     return db.stats_locations(days=days)
 
 
+def _attach_image_urls(rows: list[dict]) -> list[dict]:
+    for row in rows:
+        image_key = row.pop("image_key", None)
+        row["image_url"] = oci_storage.get_presigned_url(image_key) if image_key else None
+    return rows
+
+
 @app.get("/events/recent")
 def get_events_recent(limit: int = 20):
-    events = db.list_recent_events(limit=limit)
-    for event in events:
-        image_key = event.pop("image_key", None)
-        event["image_url"] = oci_storage.get_presigned_url(image_key) if image_key else None
-    return events
+    return _attach_image_urls(db.list_recent_events(limit=limit))
+
+
+# ---------------------------------------------------------------------------
+# Hazard review workflow (Module 4)
+# ---------------------------------------------------------------------------
+
+@app.get("/hazards")
+def get_hazards(days: int = 30):
+    return _attach_image_urls(db.list_hazard_events(days=days))
+
+
+@app.post("/hazards/{event_id}/status")
+def set_hazard_status(event_id: int, body: HazardStatusIn):
+    try:
+        db.update_hazard_status(event_id, body.status)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return {"status": "ok"}
 
 
 # ---------------------------------------------------------------------------
