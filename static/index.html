@@ -207,6 +207,17 @@
     text-transform: uppercase; letter-spacing: 0.03em;
   }
 
+  /* Hazard Detection incident review */
+  .hazard-status { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; text-transform: capitalize; }
+  .hazard-status::before { content: ''; width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+  .hazard-status.status-open { color: var(--status-critical); }
+  .hazard-status.status-open::before { background: var(--status-critical); }
+  .hazard-status.status-acknowledged { color: var(--muted); }
+  .hazard-status.status-acknowledged::before { background: var(--muted); }
+  .hazard-status.status-resolved { color: var(--status-good); }
+  .hazard-status.status-resolved::before { background: var(--status-good); }
+  .hazard-action-btn { padding: 5px 10px; font-size: 12px; }
+
   /* App shell / sidebar navigation */
   .app-shell { display: flex; min-height: 100vh; }
   .sidebar {
@@ -408,7 +419,22 @@
 </div>
 
 <div class="view" id="view-hazard-detection" hidden>
-  <div class="placeholder-view">This section is not yet built. A later stage of the roadmap will add hazard detection here.</div>
+  <div class="topbar">
+    <div>
+      <h1>Hazard Detection</h1>
+      <div class="subtitle">AI-flagged hazards are preliminary &mdash; review, acknowledge, and resolve each incident.</div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="panel events-panel">
+      <h2>Incidents</h2>
+      <table>
+        <thead><tr><th>Image</th><th>Object</th><th>Hazard reason</th><th>Location</th><th>Time</th><th>Status</th><th></th></tr></thead>
+        <tbody id="hazardsBody"></tbody>
+      </table>
+    </div>
+  </div>
 </div>
 
 <div class="view" id="view-waste-analytics" hidden>
@@ -800,6 +826,52 @@ async function refreshEvents() {
   `).join('') || '<tr><td class="empty" colspan="5">No events yet</td></tr>';
 }
 
+const HAZARD_NEXT_STATUS = { open: 'acknowledged', acknowledged: 'resolved' };
+const HAZARD_STATUS_LABEL = { open: 'Open', acknowledged: 'Acknowledged', resolved: 'Resolved' };
+
+async function advanceHazardStatus(eventId, nextStatus) {
+  const res = await fetch(`/hazards/${eventId}/status`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: nextStatus }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  await refreshHazards();
+}
+
+async function refreshHazards() {
+  const hazards = await fetchJSON('/hazards?days=30');
+  const body = document.getElementById('hazardsBody');
+  body.innerHTML = hazards.map(h => {
+    const next = HAZARD_NEXT_STATUS[h.hazard_status];
+    return `
+    <tr>
+      <td>${h.image_url
+        ? `<img class="event-thumb" src="${escapeHtml(h.image_url)}" alt="">`
+        : '<div class="event-thumb-placeholder">&mdash;</div>'}</td>
+      <td>${escapeHtml(h.detected_object) || '&mdash;'}</td>
+      <td>${escapeHtml(h.hazard_reason) || '&mdash;'}</td>
+      <td>${escapeHtml(h.location) || '&mdash;'}</td>
+      <td>${escapeHtml(h.date) || '&mdash;'}</td>
+      <td><span class="hazard-status status-${h.hazard_status}">${HAZARD_STATUS_LABEL[h.hazard_status] || escapeHtml(h.hazard_status)}</span></td>
+      <td>${next ? `<button type="button" class="hazard-action-btn" data-event-id="${h.event_id}" data-next-status="${next}">Mark ${HAZARD_STATUS_LABEL[next]}</button>` : ''}</td>
+    </tr>
+  `;
+  }).join('') || '<tr><td class="empty" colspan="7">No hazard incidents flagged</td></tr>';
+
+  body.querySelectorAll('.hazard-action-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try {
+        await advanceHazardStatus(btn.dataset.eventId, btn.dataset.nextStatus);
+      } catch (err) {
+        console.error(err);
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
 async function refreshAll() {
   await Promise.all([
     refreshOverview(),
@@ -808,6 +880,7 @@ async function refreshAll() {
     refreshProducts(),
     refreshRecommendations(),
     refreshEvents(),
+    refreshHazards(),
   ]).catch(err => console.error(err));
 }
 

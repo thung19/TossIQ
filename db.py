@@ -336,13 +336,16 @@ def stats_items(days: int = 30) -> list[dict]:
         return rows
 
 
+VALID_HAZARD_STATUSES = ("open", "acknowledged", "resolved")
+
+
 def list_hazard_events(days: int = 30) -> list[dict]:
     """Recent events flagged as a visible hazard (battery/chemical/sharps indicator etc),
-    for insights.py's hazard recommendation rule."""
+    for insights.py's hazard recommendation rule and the Hazard Detection dashboard page."""
     with get_connection() as conn, conn.cursor() as cursor:
         cursor.execute(
             """
-            SELECT detected_object, location, hazard_reason, created_at
+            SELECT event_id, detected_object, location, hazard_reason, created_at, image_key, hazard_status
             FROM waste_events
             WHERE hazard_flag = 1 AND created_at >= SYSTIMESTAMP - :days
             ORDER BY created_at DESC
@@ -351,14 +354,39 @@ def list_hazard_events(days: int = 30) -> list[dict]:
         )
         rows = [
             {
-                "detected_object": r[0],
-                "location": r[1] or "unspecified",
-                "hazard_reason": r[2],
-                "date": r[3].strftime("%Y-%m-%d") if r[3] else None,
+                "event_id": r[0],
+                "detected_object": r[1],
+                "location": r[2] or "unspecified",
+                "hazard_reason": r[3],
+                "date": r[4].strftime("%Y-%m-%d") if r[4] else None,
+                "image_key": r[5],
+                "hazard_status": r[6],
             }
             for r in cursor.fetchall()
         ]
         return rows
+
+
+def update_hazard_status(event_id: int, status: str) -> None:
+    """Advances a hazard-flagged event's review status (open -> acknowledged ->
+    resolved), per PRD section 2F's "preliminary flags requiring human review".
+
+    Raises ValueError for an invalid status (the API layer turns that into a 400)
+    and LookupError when event_id doesn't exist or isn't hazard-flagged (the API
+    layer turns that into a 404)."""
+    if status not in VALID_HAZARD_STATUSES:
+        raise ValueError(
+            f"Invalid hazard status {status!r}; expected one of {VALID_HAZARD_STATUSES}"
+        )
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            "UPDATE waste_events SET hazard_status = :status WHERE event_id = :event_id AND hazard_flag = 1",
+            status=status,
+            event_id=event_id,
+        )
+        if cursor.rowcount == 0:
+            raise LookupError(f"No hazard-flagged event with event_id {event_id}")
+        conn.commit()
 
 
 def stats_locations(days: int = 30) -> list[dict]:
