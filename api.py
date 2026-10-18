@@ -33,7 +33,12 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
+import asyncio
+import time
+
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
@@ -42,6 +47,7 @@ import db
 import image_embed
 import insights
 import oci_storage
+from camera_service import camera_service
 from fast_sort import detect as fast_detect
 from fast_sort import load_fast_model
 from main import run as run_advanced
@@ -69,10 +75,27 @@ async def lifespan(app: FastAPI):
     # here -- there is no local model to load at startup anymore.
     app.state.rules = load_rules()
     app.state.fast_model = load_fast_model()
-    yield
+    camera_service.start(asyncio.get_running_loop())
+    try:
+        yield
+    finally:
+        camera_service.stop()
 
 
 app = FastAPI(title="TossIQ Classification API", lifespan=lifespan)
+
+# The Linear-styled frontend (frontend/) runs on a separate dev server
+# (next dev on :3000) and calls these endpoints cross-origin.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_credentials=False,
+)
 
 
 class ClassificationResponse(BaseModel):
@@ -404,6 +427,65 @@ def get_recommendations(limit: int = 20):
 def generate_recommendations(days: int = 30):
     new_texts = insights.generate_recommendations(days=days)
     return {"new_recommendations": new_texts}
+
+
+# ---------------------------------------------------------------------------
+# Live camera -- MJPEG stream + WebSocket detection broadcast
+# ---------------------------------------------------------------------------
+
+@app.get("/camera/stats")
+def camera_stats():
+    """Service health + rolling counters for the Live Sorting KPI row."""
+    return {
+        **camera_service.stats(),
+        "latest_detections": camera_service.latest_detections(),
+    }
+
+
+@app.get("/camera/stream")
+def camera_stream():
+    """MJPEG multipart stream of the raw webcam frames.
+
+    Overlays (bounding boxes, labels) are drawn by the frontend in SVG over
+    the <img>, so the frames stay crisp and inherit the Linear palette
+    rather than being burned in with OpenCV's chunky BGR strokes.
+    """
+    boundary = "frame"
+
+    def generator():
+        while True:
+            jpeg = camera_service.latest_jpeg()
+            if jpeg is None:
+                time.sleep(0.05)
+                continue
+            yield (
+                f"--{boundary}\r\n".encode()
+                + b"Content-Type: image/jpeg\r\n"
+                + f"Content-Length: {len(jpeg)}\r\n\r\n".encode()
+                + jpeg
+                + b"\r\n"
+            )
+            time.sleep(1 / 20)  # cap network at ~20 fps regardless of inference rate
+
+    return StreamingResponse(
+        generator(),
+        media_type=f"multipart/x-mixed-replace; boundary={boundary}",
+    )
+
+
+@app.websocket("/ws/detections")
+async def ws_detections(ws: WebSocket):
+    """Broadcasts {timestamp, inference_ms, detections[]} per inference tick."""
+    await ws.accept()
+    queue = camera_service.subscribe()
+    try:
+        while True:
+            event = await queue.get()
+            await ws.send_json(event)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        camera_service.unsubscribe(queue)
 
 
 # ---------------------------------------------------------------------------
