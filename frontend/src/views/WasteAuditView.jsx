@@ -176,7 +176,6 @@ export default function WasteAuditView({ hidden, products, onProductAdded }) {
                       material: representative.material ?? '',
                     },
                     eventId: representative.event_id,
-                    imageLabel: `The representative photo from this group (event ${representative.event_id}) will be used as the reference image`,
                   }}
                 />
               ) : null}

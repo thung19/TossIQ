@@ -36,9 +36,20 @@ def _load_config() -> dict | None:
     return values
 
 
+_clients: dict[tuple, object] = {}
+
+
 def _client(config: dict):
+    """The S3 client for `config`, built on first use and reused afterwards --
+    constructing one costs far more than the upload or presign it serves.
+    Keyed on the config itself, so changed credentials still take effect.
+    """
+    cache_key = tuple(sorted(config.items()))
+    if cache_key in _clients:
+        return _clients[cache_key]
+
     endpoint_url = f"https://{config['OCI_OS_NAMESPACE']}.compat.objectstorage.{config['OCI_OS_REGION']}.oraclecloud.com"
-    return boto3.client(
+    client = boto3.client(
         "s3",
         endpoint_url=endpoint_url,
         region_name=config["OCI_OS_REGION"],
@@ -53,6 +64,8 @@ def _client(config: dict):
             response_checksum_validation="when_required",
         ),
     )
+    _clients[cache_key] = client
+    return client
 
 
 def upload_image(image_bytes: bytes, key: str) -> str | None:

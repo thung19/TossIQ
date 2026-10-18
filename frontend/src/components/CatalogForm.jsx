@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { postForm, postJSON } from '../api.js';
 
 const EMPTY = { name: '', supplier: '', sku: '', material: '', cost: '' };
@@ -9,7 +9,7 @@ const EMPTY = { name: '', supplier: '', sku: '', material: '', cost: '' };
  * image upload still leaves the product added, which the status message says.
  *
  * `prefill` lets another view open this same form already filled in --
- * `{ fields, eventId, imageLabel }`. When it carries an `eventId` and the
+ * `{ fields, eventId }`. When it carries an `eventId` and the
  * operator picks no file of their own, that event id is sent to the same
  * reference-image endpoint, which reads the already-stored photo from Object
  * Storage server-side -- so there is one upload path rather than two, and the
@@ -18,9 +18,6 @@ const EMPTY = { name: '', supplier: '', sku: '', material: '', cost: '' };
  * to fill it in differently.
  */
 export default function CatalogForm({ products, onAdded, title = 'Add catalog item', prefill }) {
-  // Two instances of this form can be mounted at once (the dashboard's and one
-  // opened from a waste-audit cluster), so the field ids have to be unique.
-  const idPrefix = useId();
   const [initialFields] = useState(() => ({ ...EMPTY, ...(prefill?.fields ?? {}) }));
   const [fields, setFields] = useState(initialFields);
   const [status, setStatus] = useState({ text: '', kind: '' });
@@ -84,25 +81,24 @@ export default function CatalogForm({ products, onAdded, title = 'Add catalog it
     <div className="panel">
       <h2>{title}</h2>
       <form onSubmit={handleSubmit}>
-        <input id={`${idPrefix}Name`} placeholder="Product name" required value={fields.name} onChange={set('name')} />
-        <input id={`${idPrefix}Supplier`} placeholder="Supplier" value={fields.supplier} onChange={set('supplier')} />
-        <input id={`${idPrefix}Sku`} placeholder="SKU" value={fields.sku} onChange={set('sku')} />
-        <input id={`${idPrefix}Material`} placeholder="Material" value={fields.material} onChange={set('material')} />
+        <input placeholder="Product name" required value={fields.name} onChange={set('name')} />
+        <input placeholder="Supplier" value={fields.supplier} onChange={set('supplier')} />
+        <input placeholder="SKU" value={fields.sku} onChange={set('sku')} />
+        <input placeholder="Material" value={fields.material} onChange={set('material')} />
         <input
-          id={`${idPrefix}Cost`}
           placeholder="Unit cost"
           type="number"
           step="0.01"
           value={fields.cost}
           onChange={set('cost')}
         />
-        <input id={`${idPrefix}ReferenceImage`} ref={fileRef} type="file" accept="image/*" />
+        <input ref={fileRef} type="file" accept="image/*" />
         <button type="submit">Add</button>
       </form>
       {prefillEventId !== null ? (
         <div className="status-msg">
-          {prefill.imageLabel ?? 'A stored photo will be used as the reference image'} unless you
-          choose a file above.
+          The photo stored with event {prefillEventId} will be used as the reference image unless
+          you choose a file above.
         </div>
       ) : null}
       <div className={`status-msg ${status.kind}`.trim()}>{status.text}</div>

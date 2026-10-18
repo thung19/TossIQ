@@ -51,6 +51,10 @@ class GetPresignedUrlTests(unittest.TestCase):
 
 
 class ClientConfigTests(unittest.TestCase):
+    def setUp(self):
+        oci_storage._clients.clear()
+        self.addCleanup(oci_storage._clients.clear)
+
     def test_endpoint_and_payload_signing_workaround(self):
         with mock.patch("boto3.client") as mock_client:
             oci_storage._client(ALL_ENV_VARS)
@@ -65,6 +69,36 @@ class ClientConfigTests(unittest.TestCase):
         self.assertEqual(config.s3["payload_signing_enabled"], False)
         self.assertEqual(config.request_checksum_calculation, "when_required")
         self.assertEqual(config.response_checksum_validation, "when_required")
+
+
+class ClientReuseTests(unittest.TestCase):
+    """Presigning many keys -- one dashboard request presigns a URL per row --
+    must not construct a boto3 client per key."""
+
+    def setUp(self):
+        oci_storage._clients.clear()
+        self.addCleanup(oci_storage._clients.clear)
+
+    def test_many_presigned_urls_share_one_client(self):
+        with (
+            mock.patch.dict("os.environ", ALL_ENV_VARS, clear=True),
+            mock.patch("boto3.client") as mock_client,
+        ):
+            urls = [oci_storage.get_presigned_url(f"events/{n}.jpg") for n in range(3)]
+
+        self.assertEqual(mock_client.call_count, 1)
+        self.assertEqual(mock_client.return_value.generate_presigned_url.call_count, 3)
+        self.assertEqual(len(urls), 3)
+
+    def test_changed_credentials_build_a_new_client(self):
+        rotated = dict(ALL_ENV_VARS, OCI_OS_SECRET_KEY="rotated")
+        with mock.patch("boto3.client") as mock_client:
+            with mock.patch.dict("os.environ", ALL_ENV_VARS, clear=True):
+                oci_storage.get_presigned_url("events/1.jpg")
+            with mock.patch.dict("os.environ", rotated, clear=True):
+                oci_storage.get_presigned_url("events/1.jpg")
+
+        self.assertEqual(mock_client.call_count, 2)
 
 
 if __name__ == "__main__":
