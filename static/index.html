@@ -206,9 +206,104 @@
     color: var(--status-critical); font-size: 11px; font-weight: 600;
     text-transform: uppercase; letter-spacing: 0.03em;
   }
+
+  /* App shell / sidebar navigation */
+  .app-shell { display: flex; min-height: 100vh; }
+  .sidebar {
+    width: 220px; flex-shrink: 0;
+    background: var(--surface); border-right: 1px solid var(--gridline);
+    padding: 20px 12px; display: flex; flex-direction: column; gap: 18px;
+    position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  }
+  .sidebar-brand { font-size: 16px; font-weight: 600; padding: 0 8px; }
+  .nav-section-title {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--muted); font-weight: 600; margin: 0 0 6px; padding: 0 8px;
+  }
+  .nav-item {
+    display: block; width: 100%; text-align: left;
+    background: none; border: none; color: var(--ink-secondary);
+    font: inherit; font-size: 13px; padding: 7px 8px; border-radius: 5px;
+    cursor: pointer; margin-bottom: 2px;
+  }
+  .nav-item:hover { background: var(--plane); color: var(--ink); }
+  .nav-item.active { background: var(--ink); color: var(--surface); font-weight: 600; }
+  .main-content { flex: 1; padding: 24px; min-width: 0; }
+  .view[hidden] { display: none; }
+  .placeholder-view {
+    display: flex; align-items: center; justify-content: center;
+    min-height: 320px; text-align: center; color: var(--muted);
+    font-size: 14px; padding: 40px; max-width: 480px; margin: 0 auto; line-height: 1.5;
+  }
+  .nav-toggle {
+    display: none; position: fixed; top: 14px; left: 14px; z-index: 210;
+    background: var(--ink); color: var(--surface); border: none; border-radius: 5px;
+    width: 34px; height: 34px; font-size: 16px; cursor: pointer;
+  }
+  .sidebar-overlay { display: none; }
+  @media (max-width: 760px) {
+    .sidebar {
+      position: fixed; left: 0; top: 0; z-index: 200; width: 240px;
+      transform: translateX(-100%); transition: transform 150ms ease-out;
+    }
+    .sidebar.open { transform: translateX(0); }
+    .nav-toggle { display: inline-flex; align-items: center; justify-content: center; }
+    .sidebar-overlay.open {
+      display: block; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 150;
+    }
+    .main-content { padding: 64px 16px 24px; }
+  }
 </style>
 </head>
 <body>
+
+<div class="app-shell">
+  <button type="button" class="nav-toggle" id="navToggle" aria-label="Toggle navigation" aria-expanded="false">&#9776;</button>
+  <div class="sidebar-overlay" id="sidebarOverlay"></div>
+  <nav class="sidebar" id="sidebar">
+    <div class="sidebar-brand">TossIQ</div>
+
+    <div class="nav-section">
+      <h2 class="nav-section-title">Overview</h2>
+      <button type="button" class="nav-item active" data-view="dashboard">Dashboard</button>
+    </div>
+
+    <div class="nav-section">
+      <h2 class="nav-section-title">Waste Monitoring</h2>
+      <button type="button" class="nav-item" data-view="live-sorting">Live Sorting</button>
+      <button type="button" class="nav-item" data-view="smart-bins">Smart Bins</button>
+      <button type="button" class="nav-item" data-view="hazard-detection">Hazard Detection</button>
+    </div>
+
+    <div class="nav-section">
+      <h2 class="nav-section-title">Intelligence</h2>
+      <button type="button" class="nav-item" data-view="waste-analytics">Waste Analytics</button>
+      <button type="button" class="nav-item" data-view="ai-insights">AI Insights / Waste Audit</button>
+      <button type="button" class="nav-item" data-view="procurement-intelligence">Procurement Intelligence</button>
+    </div>
+
+    <div class="nav-section">
+      <h2 class="nav-section-title">AI Tools</h2>
+      <button type="button" class="nav-item" data-view="identify-item">Identify Item</button>
+      <button type="button" class="nav-item" data-view="ask-tossiq">Ask TossIQ / ASKU</button>
+    </div>
+
+    <div class="nav-section">
+      <h2 class="nav-section-title">Management</h2>
+      <button type="button" class="nav-item" data-view="locations-devices">Locations &amp; Devices</button>
+      <button type="button" class="nav-item" data-view="operations-alerts">Operations &amp; Alerts</button>
+    </div>
+
+    <div class="nav-section">
+      <h2 class="nav-section-title">Reports &amp; Settings</h2>
+      <button type="button" class="nav-item" data-view="reports">Reports</button>
+      <button type="button" class="nav-item" data-view="settings">Settings</button>
+    </div>
+  </nav>
+
+  <main class="main-content">
+
+<div class="view" id="view-dashboard">
 
 <div class="topbar">
   <div>
@@ -300,6 +395,59 @@
       <tbody id="eventsBody"></tbody>
     </table>
   </div>
+</div>
+
+</div>
+
+<div class="view" id="view-live-sorting" hidden>
+  <div class="placeholder-view">This section is not yet built. A later stage of the roadmap will add live sorting monitoring here.</div>
+</div>
+
+<div class="view" id="view-smart-bins" hidden>
+  <div class="placeholder-view">This section is not yet built. A later stage of the roadmap will add smart bin monitoring here.</div>
+</div>
+
+<div class="view" id="view-hazard-detection" hidden>
+  <div class="placeholder-view">This section is not yet built. A later stage of the roadmap will add hazard detection here.</div>
+</div>
+
+<div class="view" id="view-waste-analytics" hidden>
+  <div class="placeholder-view">This section is not yet built. A later stage of the roadmap will add deeper waste analytics here.</div>
+</div>
+
+<div class="view" id="view-ai-insights" hidden>
+  <div class="placeholder-view">This section is not yet built. A later stage of the roadmap will add AI-driven insights and waste audits here.</div>
+</div>
+
+<div class="view" id="view-procurement-intelligence" hidden>
+  <div class="placeholder-view">This section is not yet built. A later stage of the roadmap will add procurement intelligence here.</div>
+</div>
+
+<div class="view" id="view-identify-item" hidden>
+  <div class="placeholder-view">This section is not yet built. A later stage of the roadmap will add item identification here.</div>
+</div>
+
+<div class="view" id="view-ask-tossiq" hidden>
+  <div class="placeholder-view">This section is not yet built. A later stage of the roadmap will add the Ask TossIQ assistant here.</div>
+</div>
+
+<div class="view" id="view-locations-devices" hidden>
+  <div class="placeholder-view">This section is not yet built. A later stage of the roadmap will add locations and device management here.</div>
+</div>
+
+<div class="view" id="view-operations-alerts" hidden>
+  <div class="placeholder-view">This section is not yet built. A later stage of the roadmap will add operations and alerts here.</div>
+</div>
+
+<div class="view" id="view-reports" hidden>
+  <div class="placeholder-view">This section is not yet built. A later stage of the roadmap will add reports here.</div>
+</div>
+
+<div class="view" id="view-settings" hidden>
+  <div class="placeholder-view">This section is not yet built. A later stage of the roadmap will add settings here.</div>
+</div>
+
+  </main>
 </div>
 
 <script>
@@ -739,6 +887,43 @@ daysSelect.addEventListener('change', refreshAll);
 
 refreshAll();
 setInterval(refreshAll, 5000);
+
+// ---------------------------------------------------------------------------
+// Sidebar navigation
+// ---------------------------------------------------------------------------
+
+const navItems = document.querySelectorAll('.nav-item');
+const views = document.querySelectorAll('.view');
+const sidebar = document.getElementById('sidebar');
+const navToggle = document.getElementById('navToggle');
+const sidebarOverlay = document.getElementById('sidebarOverlay');
+
+function openSidebar() {
+  sidebar.classList.add('open');
+  sidebarOverlay.classList.add('open');
+  navToggle.setAttribute('aria-expanded', 'true');
+}
+
+function closeSidebar() {
+  sidebar.classList.remove('open');
+  sidebarOverlay.classList.remove('open');
+  navToggle.setAttribute('aria-expanded', 'false');
+}
+
+navItems.forEach(btn => {
+  btn.addEventListener('click', () => {
+    const target = btn.dataset.view;
+    navItems.forEach(b => b.classList.toggle('active', b === btn));
+    views.forEach(v => { v.hidden = v.id !== `view-${target}`; });
+    closeSidebar();
+  });
+});
+
+navToggle.addEventListener('click', () => {
+  if (sidebar.classList.contains('open')) closeSidebar();
+  else openSidebar();
+});
+sidebarOverlay.addEventListener('click', closeSidebar);
 </script>
 </body>
 </html>
