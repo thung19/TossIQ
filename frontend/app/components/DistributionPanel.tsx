@@ -22,7 +22,7 @@ import {
  */
 
 const DIMENSION_LABEL: Record<string, string> = {
-  category: "disposal stream",
+  category: "bin it went in",
   material: "material",
   material_subtype: "material detail",
   object: "detected item",
@@ -35,7 +35,7 @@ const DIMENSION_LABEL: Record<string, string> = {
   campus_area: "campus area",
   can: "can",
   floor: "floor",
-  intended_stream: "intended stream",
+  correct_bin: "bin it belonged in",
   match_method: "how it was matched",
   hazard_class: "hazard type",
   hazard_severity: "hazard severity",
@@ -48,7 +48,7 @@ const DIMENSION_LABEL: Record<string, string> = {
 // someone actually opens first come first.
 const DIMENSION_ORDER = [
   "material", "material_subtype", "object", "variant", "brand", "product",
-  "sku", "supplier", "category", "intended_stream", "building", "campus_area",
+  "sku", "supplier", "category", "correct_bin", "building", "campus_area",
   "can", "floor", "hazard_class", "hazard_severity", "hour", "weekday", "day",
   "match_method",
 ];

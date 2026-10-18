@@ -69,6 +69,25 @@ def _measure_hazards(filters: dict) -> float:
     return float(_totals(filters)["hazard_n"])
 
 
+def _measure_food_waste_cost(filters: dict) -> float:
+    """Catalog value of EDIBLE food thrown away.
+
+    Not the cost of everything in the compost bin: peels, cores and spent
+    grounds are priced at zero because the product they came from was
+    eaten, so a compost-scoped cost goal measures almost nothing and reads
+    as "$3 of food waste a month" for a dining hall. This counts only what
+    the catalog tags as edible food -- plate scrapings, uneaten crusts,
+    whole discarded fruit -- which is the waste anybody means.
+    """
+    building_id = filters.get("building_id")
+    rows = db.edible_food_waste(days=filters.get("days", 30))
+    if building_id is not None:
+        names = {b["building_id"]: b["name"] for b in db.list_buildings()}
+        wanted = names.get(building_id)
+        rows = [row for row in rows if row["building"] == wanted]
+    return round(sum(row["cost"] for row in rows), 2)
+
+
 def _measure_accuracy(filters: dict) -> float:
     report = analytics.accuracy(**filters)
     # None means nobody has reviewed anything in scope. Zero would read as
@@ -91,7 +110,7 @@ METRICS = {
         "format": "count",
         "lower_is_better": True,
         "measure": _measure_landfill_items,
-        "help": "Disposals logged into the landfill stream, ignoring scope category.",
+        "help": "Disposals put in a landfill bin, whatever the goal's own scope says.",
     },
     "cost": {
         "label": "Estimated cost discarded",
@@ -109,21 +128,31 @@ METRICS = {
         "measure": _measure_mass,
         "help": "Items times catalog reference mass. No can has a weight sensor.",
     },
+    "food_waste_cost": {
+        "label": "Edible food thrown away",
+        "unit": "$",
+        "format": "money",
+        "lower_is_better": True,
+        "measure": _measure_food_waste_cost,
+        "help": "Catalog value of food that was served and not eaten. Excludes "
+                "peels, cores and spent grounds, which cost nothing because the "
+                "product they came from was used.",
+    },
     "diversion_rate": {
         "label": "Diversion rate",
         "unit": "%",
         "format": "percent",
         "lower_is_better": False,
         "measure": _measure_diversion,
-        "help": "Share of disposals going to recycling or compost rather than landfill.",
+        "help": "Share of disposals going in a recycling or compost bin rather than landfill.",
     },
     "contamination_rate": {
-        "label": "Stream contamination",
+        "label": "Wrong-bin rate",
         "unit": "%",
         "format": "percent",
         "lower_is_better": True,
         "measure": _measure_contamination,
-        "help": "Share of items logged into a stream their catalog entry disagrees with.",
+        "help": "Share of items put in a bin the catalog says is the wrong one.",
     },
     "hazard_events": {
         "label": "Hazardous items found",
@@ -142,6 +171,19 @@ METRICS = {
         "help": "Agreement with human reviewers, over the reviewed sample only.",
     },
 }
+
+# Below these, a goal is not worth setting: the slice it measures barely
+# registers, so the target is noise and hitting it proves nothing. This is
+# the same trap the recommendations page fell into -- "save $13 a year on
+# hot cups" -- except a goal is worse, because somebody will report against
+# it for a year. A rate has no floor: 3% is 3% whatever the volume.
+MATERIALITY_FLOOR = {"count": 50.0, "money": 100.0, "mass": 10.0, "percent": None}
+
+# Metrics exempt from the floor whatever their units. A safety goal is not
+# judged on volume: one lithium cell in a compactor is worth a target, and
+# telling somebody their hazard goal is too small to bother with would be
+# the wrong advice from a waste system.
+MATERIALITY_EXEMPT = {"hazard_events"}
 
 STATUSES = ("active", "achieved", "paused", "archived")
 PROJECT_STATUSES = ("proposed", "in_progress", "blocked", "done", "cancelled")
@@ -253,6 +295,36 @@ def progress(initiative: dict, current: float | None) -> dict:
     }
 
 
+def materiality(metric: str, baseline: float | None) -> dict:
+    """Whether a goal's numbers are big enough to mean anything.
+
+    Judged on the baseline rather than the target, because the baseline is
+    what the slice actually produces: a goal to cut $3 of food waste to $1
+    is not a 67% reduction worth celebrating, it is noise with a percentage
+    sign on it.
+    """
+    if metric in MATERIALITY_EXEMPT:
+        return {"is_material": True, "note": None}
+    spec = METRICS.get(metric, {})
+    floor = MATERIALITY_FLOOR.get(spec.get("format", "count"))
+    if floor is None or baseline is None:
+        return {"is_material": True, "note": None}
+    if baseline >= floor:
+        return {"is_material": True, "note": None}
+
+    unit = spec.get("unit", "")
+    rendered = f"${floor:,.0f}" if unit == "$" else f"{floor:,.0f} {unit}".strip()
+    return {
+        "is_material": False,
+        "note": (
+            f"This slice only produced {baseline:,.1f} over the baseline window, "
+            f"below the {rendered} worth setting a goal against. Widen the scope "
+            "or pick a measure with more behind it -- a target this small can be "
+            "hit or missed by noise."
+        ),
+    }
+
+
 def days_remaining(target_date: str | None, now: datetime | None = None) -> int | None:
     if not target_date:
         return None
@@ -283,8 +355,12 @@ def resolve(initiative: dict, projects: list[dict], building_names: dict[int, st
         if project["status"] in ("in_progress", "done")
     )
 
+    size = materiality(initiative.get("metric"), initiative.get("baseline_value"))
+
     return {
         **initiative,
+        "is_material": size["is_material"],
+        "materiality_note": size["note"],
         "metric_label": spec.get("label", initiative.get("metric")),
         "unit": spec.get("unit", ""),
         "format": spec.get("format", "count"),
@@ -329,6 +405,8 @@ def list_resolved(status: str | None = None, now: datetime | None = None) -> dic
 
     unbacked = [item for item in resolved
                 if item["status"] == "active" and item["project_count"] == 0]
+    immaterial = [item for item in resolved
+                  if item["status"] == "active" and not item["is_material"]]
     overdue = [
         item for item in resolved
         if item["status"] == "active"
@@ -352,6 +430,12 @@ def list_resolved(status: str | None = None, now: datetime | None = None) -> dic
              "days_overdue": -item["days_remaining"]}
             for item in overdue
         ],
+        "immaterial": [
+            {"initiative_id": item["initiative_id"], "name": item["name"],
+             "note": item["materiality_note"]}
+            for item in immaterial
+        ],
+        "materiality_floor": {k: v for k, v in MATERIALITY_FLOOR.items() if v},
         "metrics": {
             key: {k: v for k, v in spec.items() if k != "measure"}
             for key, spec in METRICS.items()

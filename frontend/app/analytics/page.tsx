@@ -55,7 +55,7 @@ const TABS: { id: Tab; label: string; blurb: string }[] = [
   { id: "hotspots", label: "Places", blurb: "Which buildings and cans are busy, and what is in them" },
   { id: "timing", label: "Timing", blurb: "When disposal peaks across the week" },
   { id: "supplies", label: "Supplies", blurb: "Discarded units by SKU and supplier" },
-  { id: "quality", label: "Quality", blurb: "Classifier agreement with reviewers, and stream misrouting" },
+  { id: "quality", label: "Quality", blurb: "Classifier agreement with reviewers, and wrong-bin sorting" },
 ];
 
 const MEASURES: Measure[] = ["count", "cost", "mass"];

@@ -52,11 +52,11 @@ export default function QualityPanel({
               </span>
             </div>
 
-            <div className="sub">by stream</div>
+            <div className="sub">by bin</div>
             <table>
               <thead>
                 <tr>
-                  <th>stream</th>
+                  <th>bin</th>
                   <th className="n">reviewed</th>
                   <th className="n">agreed</th>
                   <th className="n">rate</th>
@@ -134,7 +134,7 @@ export default function QualityPanel({
 
       <section className="panel">
         <header>
-          <span className="title">stream misrouting</span>
+          <span className="title">wrong-bin sorting</span>
           <span className="spacer" />
           {misrouted && (
             <span className="meta">
@@ -148,7 +148,7 @@ export default function QualityPanel({
           <div className="empty">loading…</div>
         ) : misrouted.rows.length === 0 ? (
           <div className="empty">
-            nothing in this scope went into a stream its catalog entry disagrees with
+            nothing in this scope went into a bin its catalog entry disagrees with
           </div>
         ) : (
           <>
@@ -156,8 +156,8 @@ export default function QualityPanel({
               <thead>
                 <tr>
                   <th>item</th>
-                  <th>logged into</th>
-                  <th>should be</th>
+                  <th>went into</th>
+                  <th>belongs in</th>
                   <th className="n">items</th>
                   <th className="n">est. mass</th>
                 </tr>

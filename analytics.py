@@ -133,8 +133,8 @@ def overview(**filters) -> dict:
             "hazards": (
                 f"{totals.get('hazard_n', 0)} item(s) in this scope were flagged as "
                 f"hazardous, {totals.get('hazard_critical_n', 0)} of them critical. "
-                "Hazards carry no catalog cost and no stream: the sorter has nowhere "
-                "correct to put them, which is the point."
+                "Hazards carry no catalog cost and belong in no bin the sorter has: "
+                "there is nowhere correct to put them, which is the point."
             ),
         },
     }
@@ -181,10 +181,10 @@ def bin_composition(top_items_per_can: int = 5, **filters) -> list[dict]:
 
 
 def misrouted(limit: int = 20, **filters) -> dict:
-    """Items logged into a stream the catalog says is the wrong one.
+    """Items put in a bin the catalog says is the wrong one.
 
-    Both sides are recorded facts -- the stream the item was logged into, and
-    the stream its catalog entry declares -- so each row is a genuine
+    Both sides are recorded facts -- the bin the item went into, and the bin
+    its catalog entry says it belongs in -- so each row is a genuine
     disagreement rather than a model opinion. That makes it the one quality
     signal on this page that needs no human reviewer.
     """
@@ -199,9 +199,9 @@ def misrouted(limit: int = 20, **filters) -> dict:
         "misrouted_count": misrouted_count,
         "total_items": total,
         "misrouted_rate": round(100.0 * misrouted_count / total, 1) if total else 0.0,
-        "note": "Compares the stream an item was logged into against the stream "
-                "its catalog entry declares. Only items matched to the catalog "
-                "can be checked.",
+        "note": "Compares the bin an item was logged into against the bin its catalog "
+                "entry says it belongs in. Only items matched to the catalog can "
+                "be checked.",
     }
 
 
@@ -315,7 +315,7 @@ def catalog_rollup(limit: int = 60, **filters) -> dict:
             "material_subtype": product.get("material_subtype") if product else None,
             "unit_cost": product.get("unit_cost") if product else None,
             "unit_weight_grams": product.get("unit_weight_grams") if product else None,
-            "intended_stream": product.get("disposal_category") if product else None,
+            "correct_bin": product.get("disposal_category") if product else None,
             "recyclable": product.get("recyclable") if product else None,
             "case_pack_qty": pack,
             "case_cost": product.get("case_cost") if product else None,

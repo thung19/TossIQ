@@ -27,6 +27,11 @@ Two opt-in flags exist for refreshing a database seeded some time ago:
     --refresh-readings   appends one current telemetry reading per can, so a
                          fleet whose tail has aged past the staleness limit
                          stops reading as entirely offline.
+    --top-up             brings every simulated can up to the current target
+                         disposal volume. Needed after raising
+                         SYNTHETIC_EVENTS_PER_CAN, because the normal seed
+                         skips any can that already has events and so leaves
+                         an old, much smaller volume in place.
     --reshape-times      rewrites CREATED_AT on synthetic disposals an earlier
                          run wrote with uniformly random timestamps, so the
                          usage heatmap shows the daily rhythm described in
@@ -523,6 +528,55 @@ def weighted_category(rng: random.Random, profile: str) -> str:
     return rng.choices(categories, weights=[weight for _, weight in weights], k=1)[0]
 
 
+def top_up_waste_events(cans: dict[str, dict]) -> int:
+    """Brings every simulated can up to the target disposal volume.
+
+    seed_waste_events skips any can that already has events, which is right
+    for a re-run and wrong after the target volume changes: this database
+    was seeded when the range was 6-28 per can, so raising it to 70-190
+    silently did nothing and the median can sat at sixteen disposals over
+    two weeks -- about one item a day, for a campus bin.
+
+    That understatement was not cosmetic. Every money and mass figure in
+    the product is counted from these rows, so a dining hall showed $3 of
+    food waste a month and goals built on it were not worth setting. This
+    tops each can up to the current target instead of skipping it.
+    """
+    rng = random.Random(RANDOM_SEED + 6)
+    existing = db.count_waste_events_by_can()
+    now = datetime.now()
+    rows = []
+    product_cache: dict[str, int | None] = {}
+
+    for can_code, can in sorted(cans.items()):
+        if not can["is_simulated"]:
+            continue
+        have = existing.get(can["can_id"], 0)
+        want = rng.randrange(*SYNTHETIC_EVENTS_PER_CAN)
+        shortfall = want - have
+        if shortfall <= 0:
+            continue
+
+        for _ in range(shortfall):
+            category = weighted_category(rng, can["profile"])
+            detected_object = rng.choice(OBJECTS_BY_CATEGORY[category])
+            if detected_object not in product_cache:
+                match = db.match_product(detected_object)
+                product_cache[detected_object] = match["product_id"] if match else None
+            rows.append({
+                "detected_object": detected_object,
+                "material": MATERIAL_BY_CATEGORY[category],
+                "category": category,
+                "location": can_code,
+                "confidence": rng.randrange(62, 96),
+                "created_at": synthetic_event_time(rng, can["profile"], now),
+                "bin_id": can["can_id"],
+                "product_id": product_cache[detected_object],
+            })
+
+    return _insert_batch(_SYNTHETIC_EVENT_INSERT, rows)
+
+
 def seed_waste_events(cans: dict[str, dict]) -> int:
     """Gives each can some contents, so clicking a pin shows a real category
     split rather than an empty panel.
@@ -674,6 +728,7 @@ def refresh_readings(cans: dict[str, dict]) -> int:
 def main() -> None:
     reshape = "--reshape-times" in sys.argv
     refresh = "--refresh-readings" in sys.argv
+    top_up = "--top-up" in sys.argv
     print("Seeding campus fleet (coordinates are APPROXIMATE -- see module docstring).")
 
     models = seed_models()
@@ -694,6 +749,9 @@ def main() -> None:
         print(f"  refreshed:       {refresh_readings(cans)} current reading(s)")
     print(f"  service events:  {seed_service_events(cans)} new")
     print(f"  synthetic events:{seed_waste_events(cans)} new")
+    if top_up:
+        print(f"  topped up:       {top_up_waste_events(cans)} event(s) to reach "
+              f"{SYNTHETIC_EVENTS_PER_CAN[0]}-{SYNTHETIC_EVENTS_PER_CAN[1]} per can")
     if reshape:
         print(f"  reshaped times:  {reshape_event_times(cans)} synthetic event(s)")
     print("Done.")

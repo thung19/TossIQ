@@ -717,7 +717,7 @@ def get_analytics_bins(top_items_per_can: int = 5, filters: AnalyticsFilters = D
 
 @app.get("/analytics/misrouted")
 def get_analytics_misrouted(limit: int = 20, filters: AnalyticsFilters = Depends()):
-    """Items logged into a stream their catalog entry disagrees with."""
+    """Items put in a bin their catalog entry says is the wrong one."""
     return analytics.misrouted(limit=limit, **filters.values)
 
 

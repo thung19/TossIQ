@@ -68,7 +68,7 @@ export default function SuppliesPanel({
               <th>product</th>
               <th>supplier</th>
               <th>material</th>
-              <th>stream</th>
+              <th>belongs in</th>
               <th className="n">items</th>
               <th className="n">cases</th>
               <th className="n">unit</th>
@@ -92,8 +92,8 @@ export default function SuppliesPanel({
                   )}
                 </td>
                 <td>
-                  {row.intended_stream ? (
-                    <span className={`pill ${row.intended_stream}`}>{row.intended_stream}</span>
+                  {row.correct_bin ? (
+                    <span className={`pill ${row.correct_bin}`}>{row.correct_bin}</span>
                   ) : (
                     <span className="dim">—</span>
                   )}

@@ -236,5 +236,79 @@ class ListResolvedTests(unittest.TestCase):
         self.assertEqual(result["achieved"], 0)
 
 
+class MaterialityTests(unittest.TestCase):
+    """A goal to cut $3 to $1 is a 67% reduction and means nothing. The
+    first version of the seeded workspace had exactly that, because the
+    slice it measured -- cost of everything in the compost bin -- is almost
+    empty once peels are priced at zero."""
+
+    def test_a_trivial_money_goal_is_flagged(self):
+        result = initiatives.materiality("cost", 3.0)
+        self.assertFalse(result["is_material"])
+        self.assertIn("noise", result["note"])
+
+    def test_a_real_money_goal_passes(self):
+        self.assertTrue(initiatives.materiality("cost", 7000.0)["is_material"])
+
+    def test_a_rate_has_no_floor(self):
+        """3% is 3% whatever the volume behind it."""
+        self.assertTrue(initiatives.materiality("contamination_rate", 0.4)["is_material"])
+        self.assertTrue(initiatives.materiality("diversion_rate", 2.0)["is_material"])
+
+    def test_safety_is_exempt_whatever_the_count(self):
+        """One lithium cell in a compactor is worth a target. Telling
+        somebody their hazard goal is too small would be the wrong advice
+        from a waste system."""
+        self.assertTrue(initiatives.materiality("hazard_events", 3.0)["is_material"])
+
+    def test_a_small_count_goal_is_flagged(self):
+        self.assertFalse(initiatives.materiality("items", 12.0)["is_material"])
+
+    def test_an_unmeasurable_baseline_is_not_flagged_as_small(self):
+        """Unknown is not the same as tiny, and should not be reported as
+        though somebody chose a bad scope."""
+        self.assertTrue(initiatives.materiality("cost", None)["is_material"])
+
+    def test_the_note_names_the_floor_it_failed(self):
+        self.assertIn("$100", initiatives.materiality("cost", 3.0)["note"])
+
+    def test_resolve_carries_the_verdict_onto_the_card(self):
+        with mock.patch.object(initiatives, "measure", return_value=2.0):
+            result = initiatives.resolve(
+                goal(metric="cost", baseline_value=3.0, target_value=1.0), [], {}, now=NOW
+            )
+        self.assertFalse(result["is_material"])
+        self.assertIsNotNone(result["materiality_note"])
+
+
+class FoodWasteMetricTests(unittest.TestCase):
+    """The food metric counts EDIBLE food only. Scoping a cost goal to the
+    compost bin instead measures peels, which are priced at zero because
+    the product they came from was eaten."""
+
+    ROWS = [
+        {"building": "Rand Hall", "item": "Plate Scrapings", "count": 20,
+         "cost": 55.0, "grams": 3800.0},
+        {"building": "Commons Center", "item": "Pizza Crust", "count": 10,
+         "cost": 3.0, "grams": 450.0},
+    ]
+
+    def test_it_sums_catalog_value_of_edible_food(self):
+        with mock.patch.object(initiatives.db, "edible_food_waste", return_value=self.ROWS):
+            value = initiatives.measure(goal(metric="food_waste_cost"))
+        self.assertEqual(value, 58.0)
+
+    def test_a_building_scope_narrows_to_that_building(self):
+        with mock.patch.object(initiatives.db, "edible_food_waste", return_value=self.ROWS), \
+             mock.patch.object(initiatives.db, "list_buildings",
+                               return_value=[{"building_id": 3, "name": "Rand Hall"}]):
+            value = initiatives.measure(goal(metric="food_waste_cost", scope_building_id=3))
+        self.assertEqual(value, 55.0)
+
+    def test_its_help_text_says_residue_is_excluded(self):
+        help_text = initiatives.METRICS["food_waste_cost"]["help"]
+        self.assertIn("peels", help_text)
+
+
 if __name__ == "__main__":
     unittest.main()

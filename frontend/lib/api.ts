@@ -405,7 +405,7 @@ export type CatalogSku = Measures & {
   material_subtype: string | null;
   unit_cost: number | null;
   unit_weight_grams: number | null;
-  intended_stream: string | null;
+  correct_bin: string | null;
   recyclable: number | null;
   case_pack_qty: number | null;
   case_cost: number | null;
@@ -738,6 +738,7 @@ export type InitiativeMetric =
   | "mass"
   | "diversion_rate"
   | "contamination_rate"
+  | "food_waste_cost"
   | "hazard_events"
   | "review_accuracy";
 
@@ -815,6 +816,11 @@ export type Initiative = {
   projects_done: number;
   projects_active: number;
   claimed_impact: number;
+  /** False when the slice this goal measures is too small for a target to
+   * mean anything -- a goal to cut $3 to $1 is noise with a percentage sign
+   * on it. Rates and safety metrics are never flagged. */
+  is_material: boolean;
+  materiality_note: string | null;
   projects: Project[];
 };
 
@@ -828,6 +834,8 @@ export type InitiativeReport = {
    * wish, and the page says so rather than showing an encouraging bar. */
   unbacked: { initiative_id: number; name: string }[];
   overdue: { initiative_id: number; name: string; days_overdue: number }[];
+  immaterial: { initiative_id: number; name: string; note: string | null }[];
+  materiality_floor: Record<string, number>;
   metrics: Record<string, MetricSpec>;
   note: string;
 };

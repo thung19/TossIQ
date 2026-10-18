@@ -49,6 +49,11 @@ export default function InitiativeCard({
           {initiative.status !== "active" && (
             <span className="status-tag">{initiative.status}</span>
           )}
+          {!initiative.is_material && (
+            <span className="too-small" title={initiative.materiality_note ?? undefined}>
+              too small to mean much
+            </span>
+          )}
           <span className="spacer" />
           {initiative.days_remaining != null && (
             <span className={`due ${initiative.days_remaining < 0 ? "late" : ""}`}>
@@ -101,6 +106,9 @@ export default function InitiativeCard({
       {expanded && (
         <div className="body">
           {initiative.description && <p className="desc">{initiative.description}</p>}
+          {!initiative.is_material && initiative.materiality_note && (
+            <p className="small-warn">{initiative.materiality_note}</p>
+          )}
 
           <div className="facts">
             <Fact label="Metric" value={initiative.metric_label} hint={initiative.metric_help} />
@@ -250,6 +258,13 @@ export default function InitiativeCard({
         .status-tag {
           color: var(--text-dim);
         }
+        .too-small {
+          padding: 0 5px;
+          line-height: 14px;
+          border-radius: 2px;
+          border: 1px dashed var(--status-in-progress);
+          color: var(--status-in-progress);
+        }
         .due.late {
           color: var(--status-bug);
         }
@@ -336,6 +351,14 @@ export default function InitiativeCard({
           font-size: 11.5px;
           line-height: 17px;
           color: var(--text-muted);
+        }
+        .small-warn {
+          padding: 8px 10px;
+          border: 1px solid var(--status-in-progress);
+          border-radius: 3px;
+          color: var(--status-in-progress);
+          font-size: 11px;
+          line-height: 16px;
         }
         .facts {
           display: grid;

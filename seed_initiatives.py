@@ -83,23 +83,28 @@ INITIATIVES = [
         ("absolute", 0.0), 1.05, 365, 30,
     ),
     (
-        "Bring stream contamination under 3%",
-        "Items logged into a stream their catalog entry disagrees with. "
-        "Contaminated loads get rejected whole, so the rate matters more than "
-        "the tonnage.",
+        "Get wrong-bin sorting under 3%",
+        "Items put in a bin the catalog says is the wrong one. A contaminated "
+        "load gets rejected whole at the sorting facility, so the rate matters "
+        "far more than the tonnage.",
         "sustainability@vanderbilt.edu",
         "contamination_rate", "reduce",
         {},
         ("absolute", 3.0), 0.92, 200, 40,
     ),
     (
-        "Cut food waste in the Commons",
-        "Edible food thrown away at Commons Center, measured by the cost of "
-        "what was bought and not eaten.",
+        # Scoped to the edible-food metric, not to "cost of everything in the
+        # compost bin". The first version measured the latter and produced a
+        # goal to cut $3 to $1, because peels and spent grounds are priced at
+        # zero -- so the slice it measured was almost empty and the target was
+        # noise with a percentage sign on it.
+        "Cut edible food waste campus-wide",
+        "Food that was served and not eaten, at catalog value. Peels, cores and "
+        "spent grounds are excluded: the product they came from was used.",
         "dining-ops@vanderbilt.edu",
-        "cost", "reduce",
-        {"scope_building": "VU-COMMONS", "scope_category": "compost"},
-        ("factor", 0.6), 1.9, 120, 55,
+        "food_waste_cost", "reduce",
+        {},
+        ("factor", 0.55), 1.6, 120, 55,
     ),
 ]
 
@@ -131,7 +136,7 @@ PROJECTS = [
      "Should move most of the compostable straws and clamshells", None, 75),
     ("Reach 75% diversion campus-wide",
      "Switch PP straws to the compostable paper line",
-     "Same supplier, same order, better stream.",
+     "Same supplier, same order, and it goes in the compost bin.",
      "dining-ops@vanderbilt.edu", "done", None, None,
      "material:DISP-STR-PP8", -20),
 
@@ -141,7 +146,7 @@ PROJECTS = [
      "facilities-ops@vanderbilt.edu", "in_progress", None, None,
      "rebalance:Rand Hall", 30),
     ("Halve landfill volume at Rand Hall",
-     "Add a compost stream to the Rand servery exit",
+     "Add a compost bin at the Rand servery exit",
      "Most of what leaves the servery is compostable and there is nowhere to put it.",
      "dining-ops@vanderbilt.edu", "blocked", None,
      "Blocked on the compost hauler contract renewal", None, 100),
@@ -164,12 +169,12 @@ PROJECTS = [
      "Five solvent disposals in thirty days, all in one building.",
      "ehs@vanderbilt.edu", "proposed", None, None, None, 60),
 
-    ("Bring stream contamination under 3%",
+    ("Get wrong-bin sorting under 3%",
      "Retrain the sorter on paper cup sleeves",
-     "The largest single misrouting contributor; going to compost, belongs in recycling.",
+     "The biggest single wrong-bin contributor: going in compost, belongs in recycling.",
      "sustainability@vanderbilt.edu", "proposed", None, None, None, 80),
 
-    ("Cut food waste in the Commons",
+    ("Cut edible food waste campus-wide",
      "Trial smaller default portions at the Commons hot line",
      "Two-week trial, re-measure after.",
      "dining-ops@vanderbilt.edu", "proposed", None, None, None, 45),

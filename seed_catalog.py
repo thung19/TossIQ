@@ -291,10 +291,15 @@ CATALOG = [
      "compost", 0, 0, None, None),
     # Edible food that was paid for and not eaten: a real, recoverable loss.
     ("PRD-PZA-CRUST", "Pizza Crust (uneaten)", None, "uneaten portion",
-     "Campus Dining", "pizza crust", "organic", "edible food", 0.18, 35.0,
+     "Campus Dining", "pizza crust", "organic", "edible food", 0.30, 45.0,
      "compost", 0, 0, None, None),
+    # Priced as a PORTION of food, which is what it is. The first version
+    # had this at $0.45 and 85 g -- a plate of uneaten servery food costed
+    # at forty-five cents -- and since it is the largest edible-food line by
+    # a distance, it made campus food waste read as $40 a month and any goal
+    # built on it look pointless.
     ("PRD-FD-SCRAP", "Plate Scrapings (uneaten)", None, "uneaten portion",
-     "Campus Dining", "food scraps", "organic", "edible food", 0.45, 85.0,
+     "Campus Dining", "food scraps", "organic", "edible food", 2.75, 190.0,
      "compost", 0, 0, None, None),
     ("PRD-FRT-BAN", "Banana, whole (discarded)", None, "whole unconsumed unit",
      "Campus Dining", "banana", "organic", "edible food", 0.32, 118.0,

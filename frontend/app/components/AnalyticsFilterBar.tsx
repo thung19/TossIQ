@@ -79,11 +79,11 @@ export default function AnalyticsFilterBar({
       />
 
       <Select
-        label="stream"
+        label="bin"
         value={value.category}
         onChange={(category) => set({ category })}
         options={(options?.categories ?? []).map((c) => ({ value: c, label: c }))}
-        allLabel="all streams"
+        allLabel="all bins"
       />
 
       <Select

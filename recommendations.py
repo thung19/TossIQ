@@ -342,7 +342,7 @@ def _infrastructure_switch(product, replacement, count, annual_units, carbon, da
                 "Disposal footprint today",
                 ["measure", "value"],
                 [
-                    ["Stream", product.get("disposal_category") or "unknown"],
+                    ["Goes in the", (product.get("disposal_category") or "unknown") + " bin"],
                     ["Estimated mass discarded",
                      _mass((product.get("unit_weight_grams") or 0) * count)],
                     ["Supplier", product.get("supplier") or "—"],
@@ -497,8 +497,8 @@ def _material_switch(product, replacement, count, annual_units, carbon, days) ->
                      replacement.get("disposal_category") or "—",
                      replacement.get("material_subtype") or replacement.get("material") or "—"],
                 ],
-                "A heavier replacement can be worse on carbon even with a better "
-                "stream, which is why both columns are here.",
+                "A heavier replacement can be worse on carbon even when it goes "
+                "in a better bin, which is why both columns are here.",
             ),
         ],
     )
@@ -831,7 +831,7 @@ def reduce_food_portions(context: dict) -> list[dict]:
 
 
 def fix_misrouting(context: dict) -> list[dict]:
-    """Items landing in a stream their catalog entry disagrees with.
+    """Items landing in a bin their catalog entry disagrees with.
 
     Both sides are recorded facts, so this needs no reviewer: the stream the
     item went into was logged, and the stream it belongs in is declared by
@@ -853,10 +853,11 @@ def fix_misrouting(context: dict) -> list[dict]:
         out.append(recommendation(
             key=f"misroute:{logged_as}->{should_be}",
             kind="sustainability",
-            title=f"Fix {should_be} items going into {logged_as}",
+            title=f"Fix {should_be} items going into the {logged_as} bin",
             summary=(
-                f"{count} items that belong in {should_be} were logged into {logged_as} "
-                f"over {days} days -- about {_mass(mass_grams)} sent down the wrong stream."
+                f"{count} items that belong in the {should_be} bin went into the "
+                f"{logged_as} bin over {days} days -- about {_mass(mass_grams)} "
+                "put in the wrong place."
             ),
             action=(
                 f"Re-label the {logged_as} aperture where these items appear, and check "
@@ -870,23 +871,25 @@ def fix_misrouting(context: dict) -> list[dict]:
                 _annualise(mass_grams, days) / 1000.0 if logged_as == "landfill" else None
             ),
             basis=(
-                "Compares the stream each item was logged into against the stream its "
-                "catalog entry declares. Only items matched to the catalog can be checked, "
-                "so this is a floor on the real figure, not a total."
+                "Compares the bin each item was logged into against the bin its catalog "
+                "entry says it belongs in. Only items matched to the catalog can be "
+                "checked, so this is a floor on the real figure, not a total."
             ),
             caveat=(
                 "A misroute may be the depositor's error or the sorter's; this data cannot "
                 "tell them apart."
             ),
             evidence=[
-                metric("Items misrouted", f"{count:,}", f"{logged_as} instead of {should_be}"),
+                metric("Items in the wrong bin", f"{count:,}",
+                       f"{logged_as} bin instead of {should_be}"),
                 metric("Estimated mass", _mass(mass_grams), "catalog reference weights"),
                 table(
                     "By item",
                     ["item", "count", "est. mass"],
                     [[item["item"], f"{item['count']:,}", _mass(item["grams"])]
                      for item in sorted(items, key=lambda item: -item["count"])],
-                    f"Every catalog product logged into {logged_as} that belongs in {should_be}.",
+                    f"Every catalog product put in the {logged_as} bin that belongs in "
+                    f"the {should_be} one.",
                 ),
             ],
         ))

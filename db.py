@@ -736,7 +736,7 @@ ANALYTICS_DIMENSIONS = {
     "campus_area":      "COALESCE(b.campus_area, 'unattributed')",
     "can":              "COALESCE(c.can_code, 'unattributed')",
     "floor":            "COALESCE(c.floor, 'unspecified')",
-    "intended_stream":  "COALESCE(p.disposal_category, 'unknown')",
+    "correct_bin":      "COALESCE(p.disposal_category, 'unknown')",
     "match_method":     "COALESCE(we.match_method, 'unmatched')",
     # Non-hazards bucket as 'not hazardous' rather than being excluded, so
     # the hazard slice is always readable against the whole population
@@ -888,11 +888,10 @@ def analytics_misrouted(
     supplier: str | None = None,
     limit: int = 20,
 ) -> list[dict]:
-    """Items whose catalog disposal stream disagrees with the stream they were
-    actually logged into.
+    """Items put in a bin the catalog says is the wrong one.
 
-    This is the contamination view, and it is only answerable because the
-    catalog records what each product SHOULD go in. Both sides are stored
+    This is the wrong-bin view, and it is only answerable because the
+    catalog records which bin each product SHOULD go in. Both sides are stored
     facts -- the logged category and the catalog's intended stream -- so a row
     here is a real disagreement, not a model opinion.
     """

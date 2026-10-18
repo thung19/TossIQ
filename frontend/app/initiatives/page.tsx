@@ -320,7 +320,9 @@ export default function InitiativesPage() {
             {spec && <p className="help">{spec.help}</p>}
             <p className="help dim">
               The baseline is measured from the last 30 days when you save, not entered here.
-              A starting point you can type is a starting point you can flatter.
+              A starting point you can type is a starting point you can flatter. If the slice
+              you pick turns out to produce almost nothing, the goal is flagged rather than
+              shown as a tidy percentage &mdash; a target that noise can hit is not a target.
             </p>
 
             <div className="form-actions">
@@ -333,6 +335,16 @@ export default function InitiativesPage() {
               </button>
             </div>
           </section>
+        )}
+
+        {report && report.immaterial.length > 0 && (
+          <p className="nudge">
+            {report.immaterial.length} goal
+            {report.immaterial.length === 1 ? " measures" : "s measure"} a slice too small
+            for a target to mean anything:{" "}
+            {report.immaterial.map((item) => item.name).join(", ")}. Widen the scope or
+            pick a measure with more behind it.
+          </p>
         )}
 
         {report && report.unbacked.length > 0 && (
