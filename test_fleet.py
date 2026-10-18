@@ -344,5 +344,87 @@ class PercentileAndMedianTests(unittest.TestCase):
         self.assertEqual(fleet._median([]), 0)
 
 
+class HeartbeatTests(unittest.TestCase):
+    """The simulated fleet has to keep reporting or the whole map reads
+    offline within two hours of a seed. This is the writer that was
+    missing; what it must not do is invent telemetry for real hardware."""
+
+    def row(self, **overrides) -> dict:
+        row = {
+            "can_id": 1,
+            "can_code": "VU-TEST-01",
+            "is_simulated": 1,
+            "reported_at": NOW - timedelta(minutes=5),
+        }
+        row.update(overrides)
+        return row
+
+    def test_a_fresh_can_needs_no_heartbeat(self):
+        due = fleet.due_for_heartbeat([self.row()], now=NOW)
+        self.assertEqual(due, [])
+
+    def test_a_can_drifting_towards_stale_is_renewed_before_it_trips(self):
+        """Written for at half the staleness window, so a can is topped up
+        well before it would be judged offline rather than flickering on
+        the boundary."""
+        drifting = self.row(
+            reported_at=NOW - timedelta(minutes=fleet.STALE_MINUTES * 0.6)
+        )
+        self.assertEqual(len(fleet.due_for_heartbeat([drifting], now=NOW)), 1)
+
+    def test_a_can_that_never_reported_is_due(self):
+        self.assertEqual(len(fleet.due_for_heartbeat([self.row(reported_at=None)], now=NOW)), 1)
+
+    def test_real_hardware_is_never_written_for(self):
+        """A real can's silence is a fact about hardware. Inventing a
+        heartbeat for a unit that is not sending one would be the
+        monitoring system lying about the thing it exists to watch."""
+        real = self.row(is_simulated=0, reported_at=NOW - timedelta(days=3))
+        self.assertEqual(fleet.due_for_heartbeat([real], now=NOW), [])
+
+    def test_nothing_due_writes_nothing(self):
+        with mock.patch.object(fleet.db, "list_can_rows", return_value=[self.row()]), \
+             mock.patch.object(fleet.db, "insert_can_readings") as write:
+            self.assertEqual(fleet.send_heartbeat(now=NOW), 0)
+        write.assert_not_called()
+
+    def test_the_health_mix_comes_from_the_seed_not_from_here(self):
+        """One definition of what the demo fleet looks like. A second one
+        here would drift from the first the next time either changed."""
+        import seed_campus
+
+        stale = self.row(
+            can_code="VU-BUTTRICK-01",
+            reported_at=NOW - timedelta(minutes=fleet.STALE_MINUTES),
+        )
+        with mock.patch.object(fleet.db, "list_can_rows", return_value=[stale]), \
+             mock.patch.object(fleet.db, "insert_can_readings",
+                               side_effect=lambda rows: len(rows)) as write:
+            fleet.send_heartbeat(now=NOW)
+        written = write.call_args[0][0][0]
+        override = seed_campus.HEALTH_OVERRIDES["VU-BUTTRICK-01"]
+        self.assertEqual(written["actuator_ok"], override["actuator_ok"])
+        self.assertEqual(written["fault_code"], override["fault_code"])
+
+    def test_a_deliberately_silent_can_stays_silent(self):
+        """VU-DIVINITY-02 exists to exercise offline-by-staleness. A
+        heartbeat that revived it would delete that case from the demo."""
+        import seed_campus
+
+        silent = self.row(
+            can_code="VU-DIVINITY-02",
+            reported_at=NOW - timedelta(hours=40),
+        )
+        with mock.patch.object(fleet.db, "list_can_rows", return_value=[silent]), \
+             mock.patch.object(fleet.db, "insert_can_readings",
+                               side_effect=lambda rows: len(rows)) as write:
+            fleet.send_heartbeat(now=NOW)
+        written = write.call_args[0][0][0]
+        expected = seed_campus.HEALTH_OVERRIDES["VU-DIVINITY-02"]["stale_hours"]
+        age_hours = (NOW - written["reported_at"]).total_seconds() / 3600
+        self.assertAlmostEqual(age_hours, expected, delta=0.1)
+        self.assertGreater(age_hours * 60, fleet.STALE_MINUTES)
+
+
 if __name__ == "__main__":
     unittest.main()

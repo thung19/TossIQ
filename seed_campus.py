@@ -682,6 +682,31 @@ def reshape_event_times(cans: dict[str, dict]) -> int:
 
 
 
+def reading_for(can_code: str, can: dict, rng: random.Random, now: datetime) -> dict:
+    """One current reading for a can, carrying its intended health.
+
+    Shared by the one-shot refresh below and fleet.py's heartbeat, so the
+    demo fleet's health mix has a single definition. A can the overrides
+    silence stays silent: its reading is written at the age the override
+    asks for, which is the whole point of that case existing.
+    """
+    override = HEALTH_OVERRIDES.get(can_code, {})
+    stale_hours = override.get("stale_hours", 0)
+    target_fill = override.get("fill", rng.uniform(8.0, 62.0))
+    return {
+        "can_id": can["can_id"],
+        "reported_at": now - timedelta(hours=stale_hours),
+        "fill_percent": round(target_fill, 1) if can["is_simulated"] else None,
+        "fill_source": "simulated" if can["is_simulated"] else "observed",
+        "camera_ok": override.get("camera_ok", 1),
+        "actuator_ok": override.get("actuator_ok", 1),
+        "connectivity_ok": override.get("connectivity_ok", 1),
+        "battery_percent": round(rng.uniform(42.0, 97.0), 1),
+        "fault_code": override.get("fault_code"),
+        "fault_detail": override.get("fault_detail"),
+    }
+
+
 def refresh_readings(cans: dict[str, dict]) -> int:
     """Appends one current reading per can, so a fleet seeded days ago stops
     reading as entirely offline.
@@ -700,28 +725,7 @@ def refresh_readings(cans: dict[str, dict]) -> int:
     """
     rng = random.Random(RANDOM_SEED + 5)
     now = datetime.now()
-    rows = []
-
-    for can_code, can in sorted(cans.items()):
-        override = HEALTH_OVERRIDES.get(can_code, {})
-        # A can seeded as silent stays silent: its "current" reading is still
-        # stale_hours old, which is the whole point of that override.
-        stale_hours = override.get("stale_hours", 0)
-        target_fill = override.get("fill", rng.uniform(8.0, 62.0))
-
-        rows.append({
-            "can_id": can["can_id"],
-            "reported_at": now - timedelta(hours=stale_hours),
-            "fill_percent": round(target_fill, 1) if can["is_simulated"] else None,
-            "fill_source": "simulated" if can["is_simulated"] else "observed",
-            "camera_ok": override.get("camera_ok", 1),
-            "actuator_ok": override.get("actuator_ok", 1),
-            "connectivity_ok": override.get("connectivity_ok", 1),
-            "battery_percent": round(rng.uniform(42.0, 97.0), 1),
-            "fault_code": override.get("fault_code"),
-            "fault_detail": override.get("fault_detail"),
-        })
-
+    rows = [reading_for(code, can, rng, now) for code, can in sorted(cans.items())]
     return _insert_batch(_READING_INSERT, rows)
 
 

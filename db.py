@@ -1486,6 +1486,29 @@ def list_can_readings(can_id: int, limit: int = 200) -> list[dict]:
         return rows
 
 
+
+def insert_can_readings(rows: list[dict]) -> int:
+    """Batch-appends telemetry. Used by the simulated fleet's heartbeat; the
+    seed has its own batch helper for the same table."""
+    if not rows:
+        return 0
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.executemany(
+            """
+            INSERT INTO can_readings
+                (can_id, reported_at, fill_percent, fill_source, camera_ok, actuator_ok,
+                 connectivity_ok, battery_percent, fault_code, fault_detail)
+            VALUES
+                (:can_id, :reported_at, :fill_percent, :fill_source, :camera_ok,
+                 :actuator_ok, :connectivity_ok, :battery_percent, :fault_code,
+                 :fault_detail)
+            """,
+            rows,
+        )
+        conn.commit()
+    return len(rows)
+
+
 def list_service_events(can_id: int, limit: int = 20) -> list[dict]:
     with get_connection() as conn, conn.cursor() as cursor:
         cursor.execute(

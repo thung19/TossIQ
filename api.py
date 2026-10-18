@@ -33,6 +33,7 @@ Run locally:
 
 import io
 import logging
+import os
 import uuid
 
 from contextlib import asynccontextmanager
@@ -80,6 +81,39 @@ CONFIDENCE_PARTIAL = 55
 CONFIDENCE_FULL = 90
 
 
+# How often the simulated fleet's heartbeat runs. The mock cans stand for
+# hardware that reports every few minutes; without a writer they age past
+# fleet.STALE_MINUTES and the whole map reads offline within a couple of
+# hours, which is what kept happening. Set FLEET_HEARTBEAT_SECONDS to 0 to
+# turn it off, which is what you want if you are demonstrating the offline
+# state itself.
+HEARTBEAT_SECONDS = int(os.environ.get("FLEET_HEARTBEAT_SECONDS") or "300")
+
+
+async def _fleet_heartbeat() -> None:
+    """Keeps the simulated fleet reporting for as long as the API is up.
+
+    Only simulated cans are written for. A real can's silence is a fact
+    about hardware, and inventing a heartbeat for a unit that is not
+    sending one would be the monitoring system lying about the thing it
+    exists to watch.
+    """
+    while True:
+        try:
+            # db.py is synchronous and this runs on the event loop, so the
+            # write goes to a worker thread rather than stalling requests.
+            written = await asyncio.to_thread(fleet.send_heartbeat)
+            if written:
+                logger.info("Fleet heartbeat: refreshed %d simulated can(s)", written)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # A failed heartbeat must not kill the loop: the database may
+            # be briefly unreachable, and the next tick should still try.
+            logger.exception("Fleet heartbeat failed")
+        await asyncio.sleep(HEARTBEAT_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Advanced-analysis model (Cohere Command A Vision via genai_vision, on
@@ -88,9 +122,19 @@ async def lifespan(app: FastAPI):
     app.state.rules = load_rules()
     app.state.fast_model = load_fast_model()
     camera_service.start(asyncio.get_running_loop())
+
+    heartbeat = (
+        asyncio.create_task(_fleet_heartbeat()) if HEARTBEAT_SECONDS > 0 else None
+    )
     try:
         yield
     finally:
+        if heartbeat is not None:
+            heartbeat.cancel()
+            try:
+                await heartbeat
+            except asyncio.CancelledError:
+                pass
         camera_service.stop()
 
 

@@ -170,6 +170,75 @@ def resolve_can(can_row: dict, now: datetime | None = None) -> dict:
 # Assembly over db.py's queries
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Telemetry heartbeat for the simulated fleet
+# ---------------------------------------------------------------------------
+# The mock cans stand for hardware that would report every few minutes. They
+# do not, because nothing was writing for them: seed_campus wrote one tail
+# and stopped, so the whole fleet aged past STALE_MINUTES and read as
+# offline within a couple of hours, every time. Refreshing by hand fixed it
+# until lunchtime and then it broke again.
+#
+# This is the missing writer. It appends a current reading for any simulated
+# can that is drifting towards stale, reproducing that can's intended health
+# from the seed's overrides so the demo keeps the mix it was built to show:
+# mostly fine, a few needing service, a few faulted, a couple genuinely
+# silent.
+#
+# Real reporting cans are never touched. Their silence is a fact about
+# hardware, and inventing a heartbeat for a unit that is not sending one
+# would be the monitoring system lying about the thing it exists to watch.
+
+# Written for at half the staleness window, so a can is topped up well
+# before it would be judged offline rather than flickering on the boundary.
+HEARTBEAT_FRACTION = 0.5
+
+
+def due_for_heartbeat(cans: list[dict], now: datetime | None = None) -> list[dict]:
+    """Simulated cans whose last reading is old enough to be worth renewing.
+
+    Cans the seed deliberately silenced are excluded by their own override,
+    not by this filter: `stale_hours` is reapplied when the reading is
+    written, so they go back to being exactly as stale as they are meant to
+    be.
+    """
+    now = now or datetime.now()
+    cutoff = timedelta(minutes=STALE_MINUTES * HEARTBEAT_FRACTION)
+    due = []
+    for can in cans:
+        if not can.get("is_simulated"):
+            continue
+        reported_at = can.get("reported_at")
+        if reported_at is None or (now - reported_at) >= cutoff:
+            due.append(can)
+    return due
+
+
+def send_heartbeat(now: datetime | None = None) -> int:
+    """Writes a current reading for every simulated can that needs one.
+
+    Returns the number written. Importing the seed here rather than at
+    module load keeps fleet.py usable without it, and keeps the health mix
+    defined in exactly one place: the seed's HEALTH_OVERRIDES, which is
+    what the demo fleet is described by everywhere else.
+    """
+    import random
+
+    import seed_campus
+
+    now = now or datetime.now()
+    rows = db.list_can_rows()
+    due = due_for_heartbeat(rows, now=now)
+    if not due:
+        return 0
+
+    rng = random.Random()
+    readings = [
+        seed_campus.reading_for(can["can_code"], can, rng, now) for can in due
+    ]
+    return db.insert_can_readings(readings)
+
+
 def list_fleet(
     status: str | None = None,
     building_id: int | None = None,
