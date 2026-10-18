@@ -28,10 +28,10 @@ import db
 # A can that has not reported within this window is treated as offline rather
 # than as healthy-but-quiet: silence from a unit that is supposed to report
 # every few minutes is itself the fault worth showing.
-STALE_MINUTES = int(os.environ.get("FLEET_STALE_MINUTES", "90"))
+STALE_MINUTES = int(os.environ.get("FLEET_STALE_MINUTES") or "90")
 
 # Fill at or above this percentage puts a can on the service list.
-SERVICE_THRESHOLD_PERCENT = float(os.environ.get("FLEET_SERVICE_THRESHOLD_PERCENT", "80"))
+SERVICE_THRESHOLD_PERCENT = float(os.environ.get("FLEET_SERVICE_THRESHOLD_PERCENT") or "80")
 
 # Worst-first. A can that is both offline and over the fill threshold shows as
 # offline, because the fill number cannot be trusted while the unit is silent.

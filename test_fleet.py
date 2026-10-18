@@ -7,8 +7,11 @@ the part a map pin's colour depends on, so they are pinned here rather than
 only exercised through the API.
 """
 
+import importlib
+import os
 import unittest
 from datetime import datetime, timedelta
+from unittest import mock
 
 import fleet
 
@@ -33,6 +36,27 @@ def can_row(**overrides) -> dict:
     }
     row.update(overrides)
     return row
+
+
+class ThresholdEnvTests(unittest.TestCase):
+    """.env.example ships both keys with empty values, so an empty string must
+    read as "not configured" rather than aborting the import that every API
+    route depends on."""
+
+    def tearDown(self):
+        importlib.reload(fleet)
+
+    def reload_with(self, env):
+        with mock.patch.dict(os.environ, env):
+            importlib.reload(fleet)
+
+    def test_empty_stale_minutes_falls_back_to_the_default(self):
+        self.reload_with({"FLEET_STALE_MINUTES": ""})
+        self.assertEqual(fleet.STALE_MINUTES, 90)
+
+    def test_empty_service_threshold_falls_back_to_the_default(self):
+        self.reload_with({"FLEET_SERVICE_THRESHOLD_PERCENT": ""})
+        self.assertEqual(fleet.SERVICE_THRESHOLD_PERCENT, 80.0)
 
 
 class ResolveStatusTests(unittest.TestCase):
