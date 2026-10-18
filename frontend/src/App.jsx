@@ -5,6 +5,7 @@ import { PLACEHOLDER_TEXT } from './navigation.js';
 import useDashboardData from './useDashboardData.js';
 import DashboardView from './views/DashboardView.jsx';
 import HazardDetectionView from './views/HazardDetectionView.jsx';
+import IdentifyItemView from './views/IdentifyItemView.jsx';
 import PlaceholderView from './views/PlaceholderView.jsx';
 
 export default function App() {
@@ -54,6 +55,7 @@ export default function App() {
             hazards={data.hazards}
             onStatusChanged={data.refreshHazards}
           />
+          <IdentifyItemView hidden={activeView !== 'identify-item'} />
           {Object.entries(PLACEHOLDER_TEXT).map(([viewId, text]) => (
             <PlaceholderView key={viewId} hidden={activeView !== viewId} text={text} />
           ))}

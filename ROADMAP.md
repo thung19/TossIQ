@@ -69,7 +69,8 @@ proxies API requests to a FastAPI server on `http://localhost:8000`.
    data; no fabricated device fleet.
 
 ## Status
-Stages 1 (sidebar navigation), 2 (hazard review workflow), and 2.5 (React
-migration) are merged. Stage 2's live workflow (trigger a hazard flag,
-acknowledge it, resolve it) and stage 2.5's migrated dashboard await captain
-verification against real OCI credentials. Stage 3 is next.
+Stages 1 (sidebar navigation), 2 (hazard review workflow), 2.5 (React
+migration), and 3 (Identify Item page) are merged. Stage 2's live workflow
+(trigger a hazard flag, acknowledge it, resolve it) and stage 2.5's migrated
+dashboard await captain verification against real OCI credentials. Stage 4 is
+next.
