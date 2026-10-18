@@ -57,8 +57,6 @@ export const PLACEHOLDER_TEXT = {
     'This section is not yet built. A later stage of the roadmap will add AI-driven insights and waste audits here.',
   'procurement-intelligence':
     'This section is not yet built. A later stage of the roadmap will add procurement intelligence here.',
-  'identify-item':
-    'This section is not yet built. A later stage of the roadmap will add item identification here.',
   'ask-tossiq':
     'This section is not yet built. A later stage of the roadmap will add the Ask TossIQ assistant here.',
   'locations-devices':
