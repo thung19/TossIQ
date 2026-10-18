@@ -506,3 +506,83 @@ export function formatMeasure(value: number, measure: Measure): string {
   }
   return value.toLocaleString();
 }
+
+
+// --- Recommendations ----------------------------------------------------
+// Every recommendation carries the observations it came from. That is the
+// contract: a card asserts something, and opening it shows the data behind
+// the assertion rather than asking the reader to trust the sentence.
+//
+// `annual_saving` is always a PROJECTION from the window, never a booked
+// figure, and the card says so. A null means the recommendation has no money
+// attached (emptying a full bin saves nothing directly), not that it saves
+// zero.
+
+export type EvidenceMetric = {
+  type: "metric";
+  label: string;
+  value: string;
+  caption: string | null;
+};
+
+export type EvidenceTable = {
+  type: "table";
+  label: string;
+  columns: string[];
+  rows: (string | number)[][];
+  caption: string | null;
+};
+
+export type EvidenceBars = {
+  type: "bars";
+  label: string;
+  rows: { bucket: string; value: number; note: string | null }[];
+  caption: string | null;
+};
+
+export type Evidence = EvidenceMetric | EvidenceTable | EvidenceBars;
+
+export type RecommendationKind =
+  | "procurement"
+  | "food"
+  | "operations"
+  | "placement"
+  | "sustainability"
+  | "safety";
+
+export type Recommendation = {
+  key: string;
+  kind: RecommendationKind;
+  title: string;
+  summary: string;
+  action: string;
+  evidence: Evidence[];
+  /** What the rule measured, in plain language. */
+  basis: string;
+  window_days: number;
+  annual_saving: number | null;
+  confidence: "high" | "medium" | "low";
+  caveat: string | null;
+};
+
+export type RecommendationReport = {
+  window_days: number;
+  generated: number;
+  recommendations: Recommendation[];
+  projected_annual_saving: number;
+  rules_run: number;
+  /** Rules that threw. Surfaced rather than swallowed: a page listing nine
+   * recommendations when it should list eleven is worse than one saying so. */
+  rules_failed: string[];
+  assumptions: Record<string, number>;
+  note: string;
+};
+
+export const KIND_LABEL: Record<RecommendationKind, string> = {
+  procurement: "purchasing",
+  food: "food waste",
+  operations: "operations",
+  placement: "bin placement",
+  sustainability: "diversion",
+  safety: "safety",
+};

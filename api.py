@@ -56,6 +56,7 @@ import fleet
 import image_embed
 import insights
 import oci_storage
+import recommendations
 from camera_service import camera_service
 from fast_sort import detect as fast_detect
 from fast_sort import load_fast_model
@@ -664,7 +665,22 @@ def get_analytics_filter_options(days: int = 30):
 
 @app.get("/recommendations")
 def get_recommendations(limit: int = 20):
+    """The stored recommendation log that insights.py appends to. Kept as it
+    was: ASKU grounds its answers partly on these, and the structured route
+    below is a different thing with a different shape."""
     return db.list_recommendations(limit=limit)
+
+
+@app.get("/recommendations/insights")
+def get_recommendation_insights(days: int = 30, limit: int | None = None):
+    """Evidence-carrying recommendations for the recommendations page.
+
+    Each item arrives with the observations it was derived from, so the UI
+    can show an operator the cups, the arithmetic and the payback rather than
+    a confident sentence with nothing behind it. Shaping lives in
+    recommendations.py; nothing here computes a figure.
+    """
+    return recommendations.generate(days=days, limit=limit)
 
 
 @app.post("/recommendations/generate")

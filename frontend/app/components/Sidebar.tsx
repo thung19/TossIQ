@@ -51,6 +51,17 @@ const Icon = {
       <rect x="3" y="3" width="10" height="10" rx="1" stroke="currentColor" strokeWidth="1.1" />
     </svg>
   ),
+  bulb: (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path
+        d="M6 11.5a4 4 0 114 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-1z"
+        stroke="currentColor"
+        strokeWidth="1.1"
+        strokeLinejoin="round"
+      />
+      <path d="M6.6 13.8h2.8" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+    </svg>
+  ),
   collapse: (
     <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
       <rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.1" />
@@ -75,6 +86,7 @@ const PRIMARY: NavItem[] = [
   { href: "/map", label: "Campus map", icon: Icon.pin },
   { href: "/analytics", label: "Analytics", icon: Icon.chart },
   { href: "/dataset", label: "Dataset", icon: Icon.dataset },
+  { href: "/recommendations", label: "Recommendations", icon: Icon.bulb },
   { href: "/operations", label: "Operator insights", icon: Icon.user },
   { href: "/asku", label: "ASKU assistant", icon: Icon.ask },
 ];

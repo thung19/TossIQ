@@ -76,6 +76,55 @@ CATALOG_FIELDS = (
     "disposal_category", "recyclable", "reusable", "case_pack_qty", "case_cost",
 )
 
+# Reusable programmes and the disposables they replace. Declared here rather
+# than inferred from the catalog, because "what replaces what" is a
+# procurement judgement: a 12 oz paper hot cup and a 20 oz PET cold cup share
+# the vision label "cup" and substitute for each other in no kitchen at all.
+#
+# EXPECTED_USES is the service life one unit is rated for, and it is what
+# turns a reusable recommendation into arithmetic. A disposable is 1.
+#
+# (sku, substitute_sku, expected_uses, substitute_note)
+SUBSTITUTIONS = [
+    ("DISP-CUP-H12", "REU-MUG-CER12", 1,
+     "Ceramic mug programme for dine-in service; keep paper cups for takeaway."),
+    ("DISP-CUP-H16", "REU-MUG-CER12", 1,
+     "Ceramic mug programme for dine-in service; keep paper cups for takeaway."),
+    ("DISP-CUP-EPS08", "DISP-CUP-H12", 1,
+     "Foam is landfill-only and already being phased out campus-wide."),
+    ("DISP-CUT-PPF", "REU-CUT-STL", 1, "Stainless flatware for dine-in trays."),
+    ("DISP-CUT-PPS", "REU-CUT-STL", 1, "Stainless flatware for dine-in trays."),
+    ("DISP-CUT-PPK", "REU-CUT-STL", 1, "Stainless flatware for dine-in trays."),
+    ("DISP-STR-PP8", "DISP-STR-PPR", 1,
+     "Paper straw is compostable and already stocked by the same supplier."),
+    ("DISP-CLM-PET9", "DISP-CLM-FIB6", 1,
+     "Fibre clamshell is compostable; the PET one is recyclable only if clean."),
+    # Each note is read on its own under a recommendation card, so none of
+    # them may refer to a neighbouring row -- "as above" means nothing there.
+    ("BEV-WTR-0500-DAS", "REU-BTL-STL", 1,
+     "Refill stations already exist across campus; bottled water is the largest "
+     "single avoidable SKU in the catalog."),
+    ("BEV-WTR-1000-SMW", "REU-BTL-STL", 1,
+     "Premium bottled water, the most expensive per unit of the three; refill "
+     "stations already exist across campus."),
+    ("BEV-WTR-0591-VU", "REU-BTL-STL", 1,
+     "Own-brand bottled water and the highest-volume of the three; refill stations "
+     "already exist across campus."),
+]
+
+# The reusable programmes themselves. They are catalog products like any
+# other so their cost per use is auditable: price divided by EXPECTED_USES,
+# plus the washing cost recommendations.py applies.
+REUSABLE_PROGRAMMES = [
+    # (sku, name, supplier, material, unit_cost, grams, stream, expected_uses)
+    ("REU-MUG-CER12", "Ceramic Mug 12 oz (reusable)", "Imperial Dade", "ceramic",
+     4.20, 310.0, "landfill", 500),
+    ("REU-CUT-STL", "Stainless Flatware, 3-piece (reusable)", "Imperial Dade", "metal",
+     3.80, 125.0, "recycling", 800),
+    ("REU-BTL-STL", "Insulated Steel Bottle 600 mL (reusable)", "Chef Works", "metal",
+     11.50, 290.0, "recycling", 1200),
+]
+
 
 CATALOG = [
     # --- Bottled drinks: three variants behind one vision label -------------
@@ -367,6 +416,51 @@ def complete_legacy_products() -> int:
     return filled
 
 
+def seed_reusable_programmes() -> int:
+    """Adds the reusable products the switch recommendations point at.
+
+    They are ordinary catalog rows, not a special case, so the cost-per-use
+    comparison the recommendation shows is a comparison between two catalog
+    products a reviewer can check. DETECTED_AS is left NULL: a ceramic mug is
+    not something the bins should ever log, and giving it a vision label
+    would make it eligible for disposal attribution.
+    """
+    inserted = 0
+    for sku, name, supplier, material, cost, grams, stream, uses in REUSABLE_PROGRAMMES:
+        if db.product_id_for_sku(sku) is not None:
+            continue
+        db.upsert_product_by_sku(
+            sku,
+            product_name=name,
+            supplier=supplier,
+            material=material,
+            material_subtype="durable goods",
+            unit_cost=cost,
+            unit_weight_grams=grams,
+            disposal_category=stream,
+            recyclable=1 if stream == "recycling" else 0,
+            reusable=1,
+            expected_uses=uses,
+            active=1,
+        )
+        inserted += 1
+    return inserted
+
+
+def apply_substitutions() -> int:
+    """Records which product replaces which, for rows that do not say yet."""
+    written = 0
+    for sku, substitute_sku, expected_uses, note in SUBSTITUTIONS:
+        if db.product_id_for_sku(sku) is None:
+            continue
+        written += db.fill_null_product_columns(sku, {
+            "substitute_sku": substitute_sku,
+            "substitute_note": note,
+            "expected_uses": expected_uses,
+        })
+    return written
+
+
 def products_by_label() -> dict[str, list[dict]]:
     """Catalog products grouped by the vision label they present as."""
     grouped: dict[str, list[dict]] = {}
@@ -513,6 +607,8 @@ def main() -> None:
     inserted, present = seed_products()
     print(f"  products:        {inserted} new, {present} already present")
     print(f"  legacy filled:   {complete_legacy_products()} column(s) on pre-002 rows")
+    print(f"  reusables:       {seed_reusable_programmes()} new programme(s)")
+    print(f"  substitutions:   {apply_substitutions()} column(s) recorded")
 
     attributed, unmatched = attribute_events()
     print(f"  attributed:      {attributed} event(s) matched to a product")

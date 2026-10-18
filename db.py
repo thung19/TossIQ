@@ -74,7 +74,8 @@ def list_products() -> list[dict]:
             SELECT product_id, product_name, brand, variant_label, supplier, sku,
                    detected_as, material, material_subtype, unit_cost,
                    unit_weight_grams, disposal_category, recyclable, reusable,
-                   case_pack_qty, case_cost, active
+                   case_pack_qty, case_cost, active,
+                   substitute_sku, substitute_note, expected_uses
             FROM products
             ORDER BY product_name
             """
@@ -336,6 +337,7 @@ def fill_null_product_columns(sku: str, columns: dict) -> int:
         "brand", "variant_label", "detected_as", "material", "material_subtype",
         "unit_cost", "unit_weight_grams", "disposal_category", "recyclable",
         "reusable", "case_pack_qty", "case_cost", "active",
+        "substitute_sku", "substitute_note", "expected_uses",
     }
     unknown = set(columns) - allowed
     if unknown:
@@ -936,6 +938,47 @@ def analytics_review_rows(
              "confidence": float(r[3]) if r[3] is not None else None,
              "verdict": r[4], "corrected_category": r[5], "corrected_object": r[6]}
             for r in cursor.fetchall()
+        ]
+
+
+
+def edible_food_waste(days: int = 30) -> list[dict]:
+    """Discarded food the catalog marks as edible, by building and item.
+
+    The 'edible food' tag is what separates a loss from a by-product. Peels,
+    cores and spent grounds carry 'fruit residue' / 'spent grounds' instead
+    and are priced at zero, because the product they came from was eaten --
+    counting them here would turn a well-run dining hall into a problem on
+    the dashboard.
+    """
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT b.name AS building,
+                   p.product_name AS item,
+                   COUNT(*) AS n,
+                   SUM(p.unit_cost) AS cost,
+                   SUM(p.unit_weight_grams) AS grams
+            FROM waste_events we
+            JOIN products p ON p.product_id = we.product_id
+            LEFT JOIN cans c ON c.can_id = we.bin_id
+            LEFT JOIN buildings b ON b.building_id = c.building_id
+            WHERE p.material_subtype = 'edible food'
+              AND we.created_at >= SYSTIMESTAMP - :days
+            GROUP BY b.name, p.product_name
+            ORDER BY SUM(p.unit_cost) DESC
+            """,
+            days=days,
+        )
+        return [
+            {
+                "building": row[0],
+                "item": row[1],
+                "count": row[2],
+                "cost": float(row[3]) if row[3] is not None else 0.0,
+                "grams": float(row[4]) if row[4] is not None else 0.0,
+            }
+            for row in cursor.fetchall()
         ]
 
 
