@@ -742,6 +742,64 @@ def can_contents(can_id: int, days: int = 30, event_limit: int = 50) -> dict:
         }
 
 
+def can_activity_cells(
+    days: int = 14,
+    building_id: int | None = None,
+    model_id: int | None = None,
+) -> list[dict]:
+    """Disposal counts bucketed by can, ISO weekday, and hour of day.
+
+    One row per (can, weekday, hour) that actually saw a disposal -- the result
+    is sparse, not a dense 43 x 7 x 24 grid, because most buckets are empty and
+    sending the zeros would be ~7k rows of nothing. fleet.py densifies the
+    small summaries the UI needs and leaves the per-can cells sparse.
+
+    day_of_week is 0 = Monday .. 6 = Sunday, computed as the day offset from
+    the start of the ISO week rather than TO_CHAR(.., 'D'), whose numbering
+    depends on the session's NLS_TERRITORY and would silently rotate the
+    heatmap's rows on a differently configured client.
+
+    Only active cans are counted, matching db.list_can_rows: a removed can is
+    not on the map, so its history must not colour the campus heatmap either.
+    Events with no BIN_ID (test-harness captures that name no physical unit)
+    are excluded by the join.
+    """
+    clauses = []
+    binds: dict = {"days": days}
+    if building_id is not None:
+        clauses.append("AND c.building_id = :building_id")
+        binds["building_id"] = building_id
+    if model_id is not None:
+        clauses.append("AND c.model_id = :model_id")
+        binds["model_id"] = model_id
+
+    sql = f"""
+        SELECT we.bin_id AS can_id,
+               TRUNC(we.created_at) - TRUNC(we.created_at, 'IW') AS day_of_week,
+               EXTRACT(HOUR FROM we.created_at) AS hour_of_day,
+               COUNT(*) AS n
+        FROM waste_events we
+        JOIN cans c ON c.can_id = we.bin_id
+        WHERE c.lifecycle_status = 'active'
+          AND we.created_at >= SYSTIMESTAMP - :days
+          {" ".join(clauses)}
+        GROUP BY we.bin_id,
+                 TRUNC(we.created_at) - TRUNC(we.created_at, 'IW'),
+                 EXTRACT(HOUR FROM we.created_at)
+    """
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(sql, **binds)
+        return [
+            {
+                "can_id": int(can_id),
+                "day_of_week": int(day_of_week),
+                "hour_of_day": int(hour_of_day),
+                "count": int(n),
+            }
+            for can_id, day_of_week, hour_of_day, n in cursor.fetchall()
+        ]
+
+
 # --- Fleet inventory upserts (used by seed_campus.py; keyed on the natural
 # --- business codes so re-running inserts nothing a second time) -------------
 

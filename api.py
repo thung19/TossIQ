@@ -520,6 +520,23 @@ def get_buildings():
     return db.list_buildings()
 
 
+@app.get("/fleet/activity")
+def get_fleet_activity(
+    days: int = fleet.ACTIVITY_WINDOW_DAYS,
+    building_id: int | None = None,
+    model_id: int | None = None,
+):
+    """When the fleet gets used: disposal counts bucketed by weekday and hour.
+
+    Takes the same building_id / model_id narrowing GET /cans takes, so the
+    heatmap describes the cans on the map beside it. Counts are logged disposal
+    events, i.e. how often a can is used -- with no weight sensors there is no
+    volume to report, so this is deliberately frequency and is labelled that
+    way in the UI.
+    """
+    return fleet.activity_heatmap(days=days, building_id=building_id, model_id=model_id)
+
+
 @app.get("/fleet/summary")
 def get_fleet_summary(building_id: int | None = None, model_id: int | None = None):
     """Counts by status for the map's KPI row, plus the thresholds those counts

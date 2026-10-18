@@ -21,9 +21,23 @@ before this map is shown as authoritative.
 
 Run from the repository root, after schema/apply.py:
     python seed_campus.py
+
+Two opt-in flags exist for refreshing a database seeded some time ago:
+
+    --refresh-readings   appends one current telemetry reading per can, so a
+                         fleet whose tail has aged past the staleness limit
+                         stops reading as entirely offline.
+    --reshape-times      rewrites CREATED_AT on synthetic disposals an earlier
+                         run wrote with uniformly random timestamps, so the
+                         usage heatmap shows the daily rhythm described in
+                         HOUR_WEIGHTS_BY_PROFILE.
+
+--reshape-times is the one destructive thing in here, which is why it is
+opt-in; it never touches events the live pipeline logged.
 """
 
 import random
+import sys
 from datetime import datetime, timedelta
 
 import db
@@ -224,7 +238,16 @@ VALUES
 
 READING_TAIL_DAYS = 7
 READINGS_PER_DAY = 4
-SYNTHETIC_EVENTS_PER_CAN = (6, 28)
+
+# How far back synthetic disposals are spread, and how many each can gets.
+# Two weeks so every weekday is sampled twice, which is the minimum for the
+# usage heatmap's day-of-week rows to be a pattern rather than a single day's
+# noise; fleet.ACTIVITY_WINDOW_DAYS defaults to the same span. The per-can
+# volume is high enough that an individual hour-of-day cell holds several
+# events -- at the previous 6-28 per can a 7 x 24 grid was almost entirely
+# empty cells, which is unreadable however it is coloured.
+SYNTHETIC_EVENT_DAYS = 14
+SYNTHETIC_EVENTS_PER_CAN = (70, 190)
 
 
 def seed_models() -> dict[str, dict]:
@@ -431,6 +454,69 @@ def seed_service_events(cans: dict[str, dict]) -> int:
     return _insert_batch(_SERVICE_INSERT, rows)
 
 
+# Hour-of-day weights per waste profile, index 0..23. These are what make the
+# usage heatmap say something: with a uniform draw every cell is the same
+# colour and "when does this can heat up" has no answer, so the synthetic
+# fleet is given the daily rhythm the real buildings have. Dining spikes at
+# the three meal services, the library fills up in the afternoon and again
+# late at night, teaching and lab space tracks class hours, residential peaks
+# on the way out in the morning and on the way in at night, and the rec centre
+# is an early-morning and after-work building. Overnight is near-zero
+# everywhere rather than exactly zero: custodial rounds and the odd late
+# passer-by do happen.
+#          0  1  2  3  4  5  6   7   8   9  10  11  12  13  14  15  16  17  18  19  20  21  22  23
+HOUR_WEIGHTS_BY_PROFILE = {
+    "dining":      [1, 1, 0, 0, 0, 1, 3, 10, 22, 14,  8, 20, 38, 30, 12,  8, 10, 24, 34, 22, 10,  5,  3,  2],
+    "library":     [6, 4, 2, 1, 1, 1, 2,  4,  8, 12, 16, 18, 16, 20, 24, 26, 24, 20, 18, 20, 22, 20, 16, 10],
+    "lab":         [2, 1, 1, 0, 0, 1, 2,  6, 14, 20, 22, 20, 16, 20, 22, 20, 16, 12,  8,  6,  5,  4,  3,  2],
+    "classroom":   [1, 1, 0, 0, 0, 0, 2,  6, 16, 22, 24, 22, 16, 22, 24, 20, 14,  8,  5,  3,  2,  2,  1,  1],
+    "admin":       [1, 0, 0, 0, 0, 0, 2,  8, 18, 22, 22, 20, 14, 18, 20, 18, 12,  6,  2,  1,  1,  1,  1,  1],
+    "residential": [8, 5, 3, 2, 1, 2, 6, 14, 18, 14, 10,  8,  8,  8,  8, 10, 14, 18, 22, 24, 26, 24, 20, 14],
+    "recreation":  [2, 1, 1, 0, 0, 2, 8, 14, 16, 12, 10, 10, 12, 10, 10, 14, 22, 28, 26, 20, 14,  8,  4,  2],
+}
+
+# Day-of-week weights, index 0 = Monday .. 6 = Sunday, matching the heatmap's
+# ISO row order in db.can_activity_cells. Teaching, lab and admin space
+# empties out at the weekend; residential and recreation do the opposite;
+# dining and the library sag but never stop.
+DAY_WEIGHTS_BY_PROFILE = {
+    "dining":      [10, 10, 10, 10,  9,  6,  5],
+    "library":     [10, 10, 10, 10,  8,  6,  8],
+    "lab":         [10, 10, 10, 10,  9,  4,  3],
+    "classroom":   [10, 10, 10, 10,  8,  2,  2],
+    "admin":       [10, 10, 10, 10,  9,  1,  1],
+    "residential": [ 8,  8,  8,  8, 10, 10, 10],
+    "recreation":  [10,  9, 10,  9,  8, 10, 10],
+}
+
+
+def synthetic_event_time(rng: random.Random, profile: str, now: datetime) -> datetime:
+    """Draws one disposal timestamp inside the synthetic window, shaped by the
+    building's daily and weekly rhythm.
+
+    A draw that lands in the future (possible only on today's partial day) is
+    moved back exactly one week, which keeps its weekday and hour -- and so the
+    distribution the heatmap displays -- unchanged.
+    """
+    day_weights = DAY_WEIGHTS_BY_PROFILE[profile]
+    days_back = rng.choices(
+        range(SYNTHETIC_EVENT_DAYS),
+        weights=[
+            day_weights[(now - timedelta(days=offset)).weekday()]
+            for offset in range(SYNTHETIC_EVENT_DAYS)
+        ],
+        k=1,
+    )[0]
+    hour = rng.choices(range(24), weights=HOUR_WEIGHTS_BY_PROFILE[profile], k=1)[0]
+
+    day = (now - timedelta(days=days_back)).replace(
+        hour=hour, minute=rng.randrange(60), second=rng.randrange(60), microsecond=0
+    )
+    if day > now:
+        day -= timedelta(days=7)
+    return day
+
+
 def weighted_category(rng: random.Random, profile: str) -> str:
     weights = PROFILE_CATEGORY_WEIGHTS[profile]
     categories = [category for category, _ in weights]
@@ -452,6 +538,13 @@ def seed_waste_events(cans: dict[str, dict]) -> int:
     per-can estimated-value figure comes from a real catalog match against a
     real PRODUCTS row, and a can shows no value when nothing in it matches the
     catalog -- which is the truth for most of this fleet.
+
+    CREATED_AT is drawn from the building's daily and weekly rhythm (see
+    synthetic_event_time) rather than uniformly across the window, so the usage
+    heatmap has a real pattern to show. A database already holding
+    uniformly-timed rows from an earlier seed run is not touched here, since
+    this function skips any can that already has events -- use
+    reshape_event_times for those.
     """
     rng = random.Random(RANDOM_SEED + 3)
     existing = db.count_waste_events_by_can()
@@ -475,7 +568,7 @@ def seed_waste_events(cans: dict[str, dict]) -> int:
                 "category": category,
                 "location": can_code,
                 "confidence": rng.randrange(62, 96),
-                "created_at": now - timedelta(hours=rng.uniform(0.2, 96.0)),
+                "created_at": synthetic_event_time(rng, can["profile"], now),
                 "bin_id": can["can_id"],
                 "product_id": product_cache[detected_object],
             })
@@ -483,7 +576,104 @@ def seed_waste_events(cans: dict[str, dict]) -> int:
     return _insert_batch(_SYNTHETIC_EVENT_INSERT, rows)
 
 
+
+_SYNTHETIC_EVENT_SELECT = """
+SELECT we.event_id, we.bin_id
+FROM waste_events we
+JOIN cans c ON c.can_id = we.bin_id
+WHERE we.image_key IS NULL
+  AND we.location = c.can_code
+"""
+
+_SYNTHETIC_TIME_UPDATE = """
+UPDATE waste_events SET created_at = :created_at WHERE event_id = :event_id
+"""
+
+
+def reshape_event_times(cans: dict[str, dict]) -> int:
+    """Rewrites CREATED_AT on existing synthetic disposals to follow the daily
+    and weekly rhythm in synthetic_event_time.
+
+    Opt-in (`python seed_campus.py --reshape-times`) because unlike the rest of
+    this module it mutates rows rather than skipping them. It is needed when a
+    database was seeded by an earlier version, whose uniform 0-96 h draw leaves
+    the usage heatmap a flat wash with one spike at whatever hour the seed was
+    run -- a correct rendering of data that has no pattern in it.
+
+    Only synthetic rows are touched, identified exactly as seed_waste_events
+    writes them: no IMAGE_KEY, and a LOCATION equal to the can's own code.
+    Events the live pipeline logged keep their real capture times, which are
+    the only observed timestamps in the table and must not be invented over.
+    """
+    profile_by_can_id = {can["can_id"]: can["profile"] for can in cans.values()}
+    rng = random.Random(RANDOM_SEED + 4)
+    now = datetime.now()
+
+    with db.get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(_SYNTHETIC_EVENT_SELECT)
+        targets = cursor.fetchall()
+        rows = [
+            {
+                "event_id": event_id,
+                "created_at": synthetic_event_time(rng, profile_by_can_id[bin_id], now),
+            }
+            for event_id, bin_id in targets
+            if bin_id in profile_by_can_id
+        ]
+        if not rows:
+            return 0
+        cursor.executemany(_SYNTHETIC_TIME_UPDATE, rows)
+        conn.commit()
+    return len(rows)
+
+
+
+def refresh_readings(cans: dict[str, dict]) -> int:
+    """Appends one current reading per can, so a fleet seeded days ago stops
+    reading as entirely offline.
+
+    The telemetry tail seed_readings writes ends at the moment it ran. Cans
+    are judged offline after FLEET_STALE_MINUTES (90 by default), so a demo
+    database left overnight shows all 43 units grey and the map's status
+    colours carry no information. Re-running the seed does not help: that
+    function deliberately skips any can that already has readings.
+
+    This appends rather than rewriting, which keeps the detail panel's history
+    chart intact, and it reproduces each can's intended end state from
+    HEALTH_OVERRIDES rather than inventing a new one -- so the faults, the
+    over-threshold fills and the two deliberately-silent units all survive the
+    refresh and the map keeps the health mix the demo is built around.
+    """
+    rng = random.Random(RANDOM_SEED + 5)
+    now = datetime.now()
+    rows = []
+
+    for can_code, can in sorted(cans.items()):
+        override = HEALTH_OVERRIDES.get(can_code, {})
+        # A can seeded as silent stays silent: its "current" reading is still
+        # stale_hours old, which is the whole point of that override.
+        stale_hours = override.get("stale_hours", 0)
+        target_fill = override.get("fill", rng.uniform(8.0, 62.0))
+
+        rows.append({
+            "can_id": can["can_id"],
+            "reported_at": now - timedelta(hours=stale_hours),
+            "fill_percent": round(target_fill, 1) if can["is_simulated"] else None,
+            "fill_source": "simulated" if can["is_simulated"] else "observed",
+            "camera_ok": override.get("camera_ok", 1),
+            "actuator_ok": override.get("actuator_ok", 1),
+            "connectivity_ok": override.get("connectivity_ok", 1),
+            "battery_percent": round(rng.uniform(42.0, 97.0), 1),
+            "fault_code": override.get("fault_code"),
+            "fault_detail": override.get("fault_detail"),
+        })
+
+    return _insert_batch(_READING_INSERT, rows)
+
+
 def main() -> None:
+    reshape = "--reshape-times" in sys.argv
+    refresh = "--refresh-readings" in sys.argv
     print("Seeding campus fleet (coordinates are APPROXIMATE -- see module docstring).")
 
     models = seed_models()
@@ -500,8 +690,12 @@ def main() -> None:
         print(f"  backfilled BIN_ID for {updated} event(s) at location {location!r}")
 
     print(f"  readings:        {seed_readings(cans)} new")
+    if refresh:
+        print(f"  refreshed:       {refresh_readings(cans)} current reading(s)")
     print(f"  service events:  {seed_service_events(cans)} new")
     print(f"  synthetic events:{seed_waste_events(cans)} new")
+    if reshape:
+        print(f"  reshaped times:  {reshape_event_times(cans)} synthetic event(s)")
     print("Done.")
 
 

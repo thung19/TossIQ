@@ -228,3 +228,73 @@ export type FleetSummary = {
   stale_minutes: number;
   service_threshold_percent: number;
 };
+
+
+// --- Usage heatmap ------------------------------------------------------
+// Counts are logged disposal events, i.e. how OFTEN a can is used. With no
+// weight sensors there is no volume to report, so nothing here should be
+// labelled as fullness.
+//
+// day_of_week is 0 = Monday .. 6 = Sunday. scale_max_* is a high percentile
+// rather than the maximum, computed server-side so the grid and the map pins
+// normalise against the same denominator; a bucket above it is genuinely
+// over-scale and the UI says so rather than clipping it silently.
+
+export type ActivityCell = {
+  can_id: number;
+  day_of_week: number;
+  hour_of_day: number;
+  count: number;
+};
+
+export type ActivityPeak = {
+  day_of_week: number;
+  day_name: string;
+  hour_of_day: number;
+  count: number;
+};
+
+export type FleetActivity = {
+  window_days: number;
+  total_events: number;
+  /** Sparse: only buckets that saw a disposal. */
+  cells: ActivityCell[];
+  /** Dense 7 x 24, summed over cans. */
+  day_hour: number[][];
+  by_hour: number[];
+  by_day: number[];
+  by_can: { can_id: number; count: number }[];
+  max_cell: number;
+  max_can: number;
+  scale_max_cell: number;
+  scale_max_can: number;
+  /** Largest single bucket in the window. May well be a one-off burst. */
+  peak: ActivityPeak | null;
+  /** Median across the seven weekdays for each hour: the recurring rhythm,
+   * unmoved by a single day's spike. */
+  typical_by_hour: number[];
+  typical_peak: { hour_of_day: number; count: number } | null;
+  day_names: string[];
+};
+
+/** A slice of the heatmap. Either coordinate may be left open: a day with no
+ * hour is the whole day, an hour with no day is that hour across the week. */
+export type TimeBucket = { day: number | null; hour: number | null };
+
+export const WHOLE_WINDOW: TimeBucket = { day: null, hour: null };
+
+/** Per-can counts inside one bucket. Mirrors fleet.activity_for_bucket; the
+ * cells are already in the client so re-querying the API on every cell click
+ * would add a round trip for an aggregation over a few hundred rows. */
+export function canCountsForBucket(
+  cells: ActivityCell[],
+  bucket: TimeBucket
+): Map<number, number> {
+  const totals = new Map<number, number>();
+  for (const cell of cells) {
+    if (bucket.day != null && cell.day_of_week !== bucket.day) continue;
+    if (bucket.hour != null && cell.hour_of_day !== bucket.hour) continue;
+    totals.set(cell.can_id, (totals.get(cell.can_id) ?? 0) + cell.count);
+  }
+  return totals;
+}

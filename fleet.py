@@ -220,3 +220,159 @@ def fleet_summary(building_id: int | None = None, model_id: int | None = None) -
         "stale_minutes": STALE_MINUTES,
         "service_threshold_percent": SERVICE_THRESHOLD_PERCENT,
     }
+
+
+# ---------------------------------------------------------------------------
+# Usage heatmap -- when, not just where
+# ---------------------------------------------------------------------------
+# Same rule as status: the shaping lives here, the frontend only paints what
+# it is handed. In particular the colour scale's upper bound (`max_cell` /
+# `max_can`) is computed here, so the map and the grid are normalised against
+# the same denominator and a hot can looks hot on both.
+
+DAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+# How far back the heatmap looks by default. Two weeks is the shortest window
+# that gives every weekday at least two samples, which is what makes a
+# "Tuesdays are quiet" reading mean anything rather than being one day's noise.
+ACTIVITY_WINDOW_DAYS = 14
+
+
+def activity_heatmap(
+    days: int = ACTIVITY_WINDOW_DAYS,
+    building_id: int | None = None,
+    model_id: int | None = None,
+) -> dict:
+    """When the fleet gets used, over the same scope the map is showing.
+
+    Returns three views of one query, because the UI needs all three and
+    recomputing them in TypeScript would be the duplicated-derivation mistake
+    this module exists to avoid:
+
+    * `cells`   -- sparse (can, weekday, hour) counts. The client filters these
+                   to recolour the map for a selected time bucket.
+    * `day_hour`-- a dense 7 x 24 grid summed over cans: the heatmap itself.
+    * `by_can`  -- totals per can over the whole window, for the default map
+                   intensity when no bucket is selected.
+
+    Every number here is counted from logged disposal events. There are no
+    weight sensors, so this is usage *frequency*, not volume, and the API
+    labels it as such rather than implying it measures how full a can gets.
+    """
+    cells = db.can_activity_cells(days=days, building_id=building_id, model_id=model_id)
+
+    day_hour = [[0] * 24 for _ in range(7)]
+    by_can: dict[int, int] = {}
+    by_hour = [0] * 24
+    by_day = [0] * 7
+
+    for cell in cells:
+        day, hour, count = cell["day_of_week"], cell["hour_of_day"], cell["count"]
+        day_hour[day][hour] += count
+        by_hour[hour] += count
+        by_day[day] += count
+        by_can[cell["can_id"]] = by_can.get(cell["can_id"], 0) + count
+
+    total = sum(by_hour)
+    max_cell = max((max(row) for row in day_hour), default=0)
+    max_can = max(by_can.values(), default=0)
+
+    # The colour scale is bounded by a high percentile of the non-empty cells,
+    # not by the maximum. One real burst -- the live camera logged 294 items
+    # into a single hour during a demo run -- is a true observation and keeps
+    # its timestamps, but scaling 168 cells against it renders every ordinary
+    # hour the same near-black and destroys exactly the pattern the heatmap
+    # exists to show. Cells above the bound are reported as over-scale instead
+    # of being clipped silently, so the outlier is still visible as an outlier.
+    scale_max_cell = _percentile([count for row in day_hour for count in row if count > 0], 0.95)
+    scale_max_can = _percentile([count for count in by_can.values() if count > 0], 0.95)
+
+    # The headline "when does it get busy" figure is the median across the
+    # seven weekdays for each hour, not the largest single bucket. A one-off
+    # burst -- the live camera logged 294 items into one hour during a demo
+    # run -- is the largest bucket by a wide margin and would otherwise be
+    # reported as the campus's busy time, which it plainly is not. A median
+    # needs the same hour to be busy on most days before it moves.
+    typical_by_hour = [_median([day_hour[day][hour] for day in range(7)]) for hour in range(24)]
+    typical_peak = None
+    if any(typical_by_hour):
+        hour = typical_by_hour.index(max(typical_by_hour))
+        typical_peak = {"hour_of_day": hour, "count": typical_by_hour[hour]}
+
+    peak = None
+    if max_cell > 0:
+        for day in range(7):
+            for hour in range(24):
+                if day_hour[day][hour] == max_cell:
+                    peak = {
+                        "day_of_week": day,
+                        "day_name": DAY_NAMES[day],
+                        "hour_of_day": hour,
+                        "count": max_cell,
+                    }
+                    break
+            if peak:
+                break
+
+    return {
+        "window_days": days,
+        "total_events": total,
+        "cells": cells,
+        "day_hour": day_hour,
+        "by_hour": by_hour,
+        "by_day": by_day,
+        "by_can": [{"can_id": can_id, "count": count} for can_id, count in sorted(by_can.items())],
+        "max_cell": max_cell,
+        "max_can": max_can,
+        "scale_max_cell": scale_max_cell,
+        "scale_max_can": scale_max_can,
+        "peak": peak,
+        "typical_by_hour": typical_by_hour,
+        "typical_peak": typical_peak,
+        "day_names": list(DAY_NAMES),
+    }
+
+
+
+
+def _median(values: list[int]) -> int:
+    """Integer median. These are event counts, and a "busiest hour: 6.5 items"
+    readout would imply a precision the half-step does not carry, so the lower
+    of the two middles is taken for an even-length list rather than averaging.
+    """
+    if not values:
+        return 0
+    return sorted(values)[(len(values) - 1) // 2]
+
+
+def _percentile(values: list[int], fraction: float) -> int:
+    """Nearest-rank percentile, floored at 1 so a scale bound is never zero.
+
+    Deliberately not statistics.quantiles: that interpolates, and these are
+    event counts -- a bound of 7.4 items is not a thing the legend can label.
+    """
+    if not values:
+        return 1
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, max(0, round(fraction * (len(ordered) - 1))))
+    return max(1, ordered[index])
+
+
+def activity_for_bucket(
+    cells: list[dict], day_of_week: int | None = None, hour_of_day: int | None = None
+) -> dict[int, int]:
+    """Per-can counts inside one slice of the heatmap.
+
+    Either coordinate may be left open: (day=1, hour=None) is "all of Tuesday",
+    (day=None, hour=12) is "noon on every day", and both None is the whole
+    window. Exposed for the API's tests and as the reference the frontend's
+    identical client-side filter is checked against.
+    """
+    totals: dict[int, int] = {}
+    for cell in cells:
+        if day_of_week is not None and cell["day_of_week"] != day_of_week:
+            continue
+        if hour_of_day is not None and cell["hour_of_day"] != hour_of_day:
+            continue
+        totals[cell["can_id"]] = totals.get(cell["can_id"], 0) + cell["count"]
+    return totals

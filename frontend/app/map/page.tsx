@@ -6,15 +6,22 @@ import PageHeader from "../components/PageHeader";
 import StatCard from "../components/StatCard";
 import FillBar from "../components/FillBar";
 import CanDetailPanel from "../components/CanDetailPanel";
+import UsageHeatmap from "../components/UsageHeatmap";
 import FleetFilters, { EMPTY_FILTERS, type FleetFilterState } from "../components/FleetFilters";
+import { bucketLabel } from "../../lib/heatScale";
 import {
   apiFetch,
+  canCountsForBucket,
+  WHOLE_WINDOW,
   type Building,
   type Can,
   type CanModel,
   type CanStatus,
+  type FleetActivity,
   type FleetSummary,
+  type TimeBucket,
 } from "../../lib/api";
+import type { BasemapKey, MapMode } from "../components/CampusMap";
 
 // Leaflet touches `window` at import time, so the map component can only be
 // loaded in the browser.
@@ -22,6 +29,13 @@ const CampusMap = dynamic(() => import("../components/CampusMap"), {
   ssr: false,
   loading: () => <div className="map-loading">loading map…</div>,
 });
+
+const MODE_LABEL: Record<MapMode, string> = {
+  status: "status",
+  activity: "usage",
+};
+
+const DEFAULT_WINDOW_DAYS = 14;
 
 const STATUS_ORDER: CanStatus[] = ["offline", "fault", "needs_service", "ok"];
 const STATUS_LABEL: Record<CanStatus, string> = {
@@ -38,6 +52,12 @@ export default function CampusMapPage() {
   const [models, setModels] = useState<CanModel[]>([]);
   const [filters, setFilters] = useState<FleetFilterState>(EMPTY_FILTERS);
   const [selectedCanId, setSelectedCanId] = useState<number | null>(null);
+  const [mode, setMode] = useState<MapMode>("status");
+  const [basemap, setBasemap] = useState<BasemapKey>("satellite");
+  const [activity, setActivity] = useState<FleetActivity | null>(null);
+  const [activityError, setActivityError] = useState<string | null>(null);
+  const [windowDays, setWindowDays] = useState(DEFAULT_WINDOW_DAYS);
+  const [bucket, setBucket] = useState<TimeBucket>(WHOLE_WINDOW);
   // Bumped after a service action so the fleet refetches without waiting for
   // the next poll tick.
   const [refreshToken, setRefreshToken] = useState(0);
@@ -107,6 +127,64 @@ export default function CampusMapPage() {
     };
   }, []);
 
+  // Usage history is not polled on the fleet's 3 s tick: it is a multi-week
+  // aggregate that cannot visibly change that fast, and re-fetching several
+  // hundred cells every three seconds to redraw an identical grid would be
+  // waste. It refetches when the scope or the window changes, which is when
+  // the answer actually differs.
+  //
+  // It does retry, though, and that is the difference from the filter-options
+  // fetch below. A one-shot fetch that loses the race against a booting
+  // backend leaves this panel reading "loading..." permanently, because
+  // nothing else ever asks again -- so a failure reschedules itself, and
+  // stops as soon as it succeeds.
+  useEffect(() => {
+    let alive = true;
+    let retry: ReturnType<typeof setTimeout> | null = null;
+    setActivityError(null);
+
+    const load = async () => {
+      try {
+        const separator = scopeQuery ? "&" : "?";
+        const next = await apiFetch<FleetActivity>(
+          `/fleet/activity${scopeQuery}${separator}days=${windowDays}`
+        );
+        if (!alive) return;
+        setActivity(next);
+        setActivityError(null);
+      } catch (error) {
+        if (!alive) return;
+        setActivityError(error instanceof Error ? error.message : "request failed");
+        retry = setTimeout(load, 4000);
+      }
+    };
+
+    load();
+    return () => {
+      alive = false;
+      if (retry) clearTimeout(retry);
+    };
+  }, [scopeQuery, windowDays]);
+
+  // Per-can counts for whatever slice of the heatmap is selected. Derived
+  // from the cells already in hand rather than re-queried, so clicking around
+  // the grid is instant.
+  const intensity = useMemo(
+    () => canCountsForBucket(activity?.cells ?? [], bucket),
+    [activity, bucket]
+  );
+
+  // A single hour of a single weekday holds a fraction of the window's
+  // events, so normalising it against the whole-window bound would paint
+  // every can cold. The bound follows the selection: the API's percentile for
+  // the unsliced view, the slice's own busiest can otherwise.
+  const intensityScaleMax = useMemo(() => {
+    if (bucket.day == null && bucket.hour == null) return activity?.scale_max_can ?? 1;
+    return Math.max(1, ...intensity.values());
+  }, [activity, bucket, intensity]);
+
+  const dayNames = activity?.day_names ?? [];
+
   const worklist = useMemo(
     () =>
       [...cans]
@@ -127,6 +205,9 @@ export default function CampusMapPage() {
         right={
           <span className="header-meta">
             <span>{cans.length} cans shown</span>
+            {mode === "activity" && (
+              <span className="dim">· coloured by usage, {bucketLabel(bucket.day, bucket.hour, dayNames)}</span>
+            )}
             {summary && summary.total === cans.length && (
               <span className="dim">
                 · {summary.observed} live · {summary.simulated} simulated
@@ -163,7 +244,53 @@ export default function CampusMapPage() {
 
         <section className={`grid ${selectedCanId ? "with-panel" : ""}`}>
           <div className="map-col">
-            <CampusMap cans={cans} selectedCanId={selectedCanId} onSelect={setSelectedCanId} />
+            <div className="mode-row">
+              <span className="mode-label">colour pins by</span>
+              {(["status", "activity"] as MapMode[]).map((option) => (
+                <button
+                  key={option}
+                  className={`chip ${mode === option ? "on" : ""}`}
+                  onClick={() => setMode(option)}
+                >
+                  {MODE_LABEL[option]}
+                </button>
+              ))}
+              {mode === "activity" && activity && (
+                <span className="mode-note">
+                  {activity.total_events.toLocaleString()} items over {activity.window_days}d ·
+                  scale tops out at {intensityScaleMax}
+                </span>
+              )}
+            </div>
+
+            <CampusMap
+              cans={cans}
+              selectedCanId={selectedCanId}
+              onSelect={setSelectedCanId}
+              mode={mode}
+              basemap={basemap}
+              onBasemapChange={setBasemap}
+              intensity={intensity}
+              intensityScaleMax={intensityScaleMax}
+              bucketDay={bucket.day}
+              bucketHour={bucket.hour}
+              dayNames={dayNames}
+            />
+
+            <UsageHeatmap
+              activity={activity}
+              error={activityError}
+              bucket={bucket}
+              onBucketChange={(next) => {
+                setBucket(next);
+                // Picking a time is a request to look at usage, so the map
+                // follows rather than making the operator flip a second
+                // control to see what they just selected.
+                if (next.day != null || next.hour != null) setMode("activity");
+              }}
+              windowDays={windowDays}
+              onWindowDaysChange={setWindowDays}
+            />
           </div>
 
           {selectedCanId ? (
@@ -240,12 +367,50 @@ export default function CampusMapPage() {
           grid-template-columns: minmax(0, 1fr) 380px;
           gap: 10px;
           flex: 1;
-          min-height: 520px;
+          min-height: 760px;
         }
         .map-col {
           min-width: 0;
           display: flex;
           flex-direction: column;
+          gap: 8px;
+        }
+        .map-col :global(.map-shell) {
+          flex: 1;
+        }
+        .mode-row {
+          display: flex;
+          align-items: center;
+          gap: 5px;
+          font-family: ui-monospace, Menlo, monospace;
+          font-size: 11px;
+          flex-wrap: wrap;
+        }
+        .mode-label {
+          color: var(--text-dim);
+        }
+        .mode-note {
+          color: var(--text-dim);
+          font-size: 10px;
+          margin-left: 4px;
+        }
+        .chip {
+          padding: 2px 8px;
+          border: 1px solid var(--border-08);
+          border-radius: 3px;
+          font-family: inherit;
+          font-size: 10.5px;
+          line-height: 16px;
+          color: var(--text-muted);
+        }
+        .chip:hover {
+          background: var(--overlay-05);
+          color: var(--text-secondary);
+        }
+        .chip.on {
+          background: var(--overlay-08);
+          border-color: var(--border-solid);
+          color: var(--text-primary);
         }
         .map-col :global(.map-loading) {
           flex: 1;

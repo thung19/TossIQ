@@ -222,5 +222,127 @@ class ResolveCanTests(unittest.TestCase):
         self.assertEqual(resolved["status"], "ok")
 
 
+def cell(can_id: int, day: int, hour: int, count: int) -> dict:
+    return {"can_id": can_id, "day_of_week": day, "hour_of_day": hour, "count": count}
+
+
+class ActivityHeatmapTests(unittest.TestCase):
+    """The shaping fleet.activity_heatmap does over db.can_activity_cells.
+
+    db is patched out, so these run without credentials like the rest of this
+    file; the SQL itself is exercised by hitting the live endpoint.
+    """
+
+    def heatmap(self, cells, **kwargs):
+        with mock.patch.object(fleet.db, "can_activity_cells", return_value=cells):
+            return fleet.activity_heatmap(**kwargs)
+
+    def test_sparse_cells_are_densified_into_a_seven_by_twenty_four_grid(self):
+        result = self.heatmap([cell(1, 0, 9, 3), cell(2, 0, 9, 4), cell(1, 6, 23, 1)])
+        self.assertEqual(len(result["day_hour"]), 7)
+        self.assertTrue(all(len(row) == 24 for row in result["day_hour"]))
+        # Two cans in the same bucket sum into one campus cell.
+        self.assertEqual(result["day_hour"][0][9], 7)
+        self.assertEqual(result["day_hour"][6][23], 1)
+        self.assertEqual(result["total_events"], 8)
+
+    def test_per_can_totals_sum_across_every_bucket(self):
+        result = self.heatmap([cell(1, 0, 9, 3), cell(1, 2, 18, 5), cell(2, 0, 9, 4)])
+        self.assertEqual(result["by_can"], [{"can_id": 1, "count": 8}, {"can_id": 2, "count": 4}])
+        self.assertEqual(result["max_can"], 8)
+
+    def test_empty_window_reports_zeroes_rather_than_failing(self):
+        result = self.heatmap([])
+        self.assertEqual(result["total_events"], 0)
+        self.assertIsNone(result["peak"])
+        self.assertIsNone(result["typical_peak"])
+        # A zero scale bound would make every colour lookup divide by zero.
+        self.assertEqual(result["scale_max_cell"], 1)
+        self.assertEqual(result["scale_max_can"], 1)
+
+    def test_one_burst_does_not_set_the_colour_scale(self):
+        """The regression this exists for: the live camera logged 294 items
+        into one hour during a demo run. Scaling 168 cells against that paints
+        every ordinary hour the same near-black."""
+        ordinary = [cell(1, day, hour, 5) for day in range(7) for hour in range(8, 20)]
+        result = self.heatmap([*ordinary, cell(2, 6, 2, 294)])
+        self.assertEqual(result["max_cell"], 294)
+        self.assertLess(result["scale_max_cell"], 20)
+
+    def test_busiest_hour_is_the_recurring_one_not_the_single_largest_bucket(self):
+        """6pm is busy every day; 2am is busy once. The headline figure must
+        name 6pm."""
+        recurring = [cell(1, day, 18, 9) for day in range(7)]
+        burst = [cell(2, 6, 2, 250)]
+        result = self.heatmap([*recurring, *burst])
+        self.assertEqual(result["typical_peak"]["hour_of_day"], 18)
+        # The absolute peak is still reported -- as an outlier, not as the answer.
+        self.assertEqual(result["peak"]["hour_of_day"], 2)
+        self.assertEqual(result["peak"]["count"], 250)
+
+    def test_typical_hour_ignores_an_hour_busy_on_a_minority_of_days(self):
+        # 10am is enormous on two days and dead on five; 15:00 is steady.
+        spiky = [cell(1, 0, 10, 80), cell(1, 1, 10, 80)]
+        steady = [cell(1, day, 15, 4) for day in range(7)]
+        result = self.heatmap([*spiky, *steady])
+        self.assertEqual(result["typical_peak"]["hour_of_day"], 15)
+
+    def test_day_names_are_monday_first_matching_the_iso_week_sql(self):
+        result = self.heatmap([cell(1, 0, 9, 1)])
+        self.assertEqual(result["day_names"][0], "Mon")
+        self.assertEqual(result["day_names"][6], "Sun")
+
+    def test_window_days_is_passed_through_to_the_query_and_echoed_back(self):
+        with mock.patch.object(fleet.db, "can_activity_cells", return_value=[]) as query:
+            result = fleet.activity_heatmap(days=30, building_id=4, model_id=2)
+        query.assert_called_once_with(days=30, building_id=4, model_id=2)
+        self.assertEqual(result["window_days"], 30)
+
+
+class ActivityBucketTests(unittest.TestCase):
+    """fleet.activity_for_bucket is the reference the frontend's identical
+    client-side slice (canCountsForBucket in lib/api.ts) is checked against."""
+
+    CELLS = [
+        cell(1, 4, 18, 3),
+        cell(1, 4, 9, 2),
+        cell(1, 0, 18, 5),
+        cell(2, 4, 18, 7),
+    ]
+
+    def test_both_coordinates_selects_one_bucket(self):
+        self.assertEqual(fleet.activity_for_bucket(self.CELLS, day_of_week=4, hour_of_day=18), {1: 3, 2: 7})
+
+    def test_day_alone_selects_the_whole_day(self):
+        self.assertEqual(fleet.activity_for_bucket(self.CELLS, day_of_week=4), {1: 5, 2: 7})
+
+    def test_hour_alone_selects_that_hour_across_the_week(self):
+        self.assertEqual(fleet.activity_for_bucket(self.CELLS, hour_of_day=18), {1: 8, 2: 7})
+
+    def test_neither_coordinate_selects_the_whole_window(self):
+        self.assertEqual(fleet.activity_for_bucket(self.CELLS), {1: 10, 2: 7})
+
+    def test_a_bucket_nothing_falls_into_is_empty_not_an_error(self):
+        self.assertEqual(fleet.activity_for_bucket(self.CELLS, day_of_week=2, hour_of_day=3), {})
+
+
+class PercentileAndMedianTests(unittest.TestCase):
+    def test_percentile_of_an_empty_list_is_one_not_zero(self):
+        self.assertEqual(fleet._percentile([], 0.95), 1)
+
+    def test_percentile_is_nearest_rank_and_never_below_one(self):
+        self.assertEqual(fleet._percentile([0, 0, 0], 0.95), 1)
+        # Rank interpolated across the index range: round(0.95 * 99) = 94,
+        # so the 95th percentile of 1..100 is the 95th value.
+        self.assertEqual(fleet._percentile(list(range(1, 101)), 0.95), 95)
+        self.assertEqual(fleet._percentile(list(range(1, 101)), 0.0), 1)
+        self.assertEqual(fleet._percentile(list(range(1, 101)), 1.0), 100)
+
+    def test_median_takes_the_lower_middle_rather_than_averaging(self):
+        self.assertEqual(fleet._median([1, 2, 3, 4]), 2)
+        self.assertEqual(fleet._median([5]), 5)
+        self.assertEqual(fleet._median([]), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
