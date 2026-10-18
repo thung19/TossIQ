@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import AccountMenu from "./AccountMenu";
 
 type NavItem = {
   href: string;
@@ -50,6 +51,12 @@ const Icon = {
       <rect x="3" y="3" width="10" height="10" rx="1" stroke="currentColor" strokeWidth="1.1" />
     </svg>
   ),
+  collapse: (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.1" />
+      <path d="M6 3v10" stroke="currentColor" strokeWidth="1.1" />
+    </svg>
+  ),
   pin: (
     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
       <path
@@ -75,9 +82,11 @@ const PRIMARY: NavItem[] = [
 export default function Sidebar({
   cameraOnline,
   lastInferenceMs,
+  onCollapse,
 }: {
   cameraOnline: boolean;
   lastInferenceMs: number | null;
+  onCollapse?: () => void;
 }) {
   const pathname = usePathname();
 
@@ -87,8 +96,14 @@ export default function Sidebar({
         <span className="workspace-mark">tossiq</span>
         <span className="workspace-sep">/</span>
         <span className="workspace-env">ops</span>
+        {onCollapse && (
+          <button className="collapse" onClick={onCollapse} title="Hide sidebar (⌘B)">
+            {Icon.collapse}
+          </button>
+        )}
       </div>
 
+      <div className="group-label">monitor</div>
       <nav className="nav-group">
         {PRIMARY.map((item) => {
           const active = pathname === item.href;
@@ -117,21 +132,25 @@ export default function Sidebar({
       </nav>
 
       <div className="sidebar-footer">
-        <div className="footer-row">
-          <span className={`live-dot ${cameraOnline ? "online" : "offline"}`} />
-          <span className="k">cam</span>
-          <span className="v">{cameraOnline ? "online" : "offline"}</span>
+        <div className="status">
+          <div className="footer-row">
+            <span className={`live-dot ${cameraOnline ? "online" : "offline"}`} />
+            <span className="k">camera</span>
+            <span className="v">{cameraOnline ? "online" : "offline"}</span>
+          </div>
+          <div className="footer-row">
+            <span className="live-dot spacer" />
+            <span className="k">inference</span>
+            <span className="v">{lastInferenceMs != null ? `${lastInferenceMs} ms` : "—"}</span>
+          </div>
         </div>
-        <div className="footer-row">
-          <span className="k">lat</span>
-          <span className="v">{lastInferenceMs != null ? `${lastInferenceMs}ms` : "—"}</span>
-        </div>
+        <AccountMenu />
       </div>
 
       <style jsx>{`
         .sidebar {
-          width: 212px;
-          padding: 10px 0 0;
+          width: 228px;
+          padding: 11px 0 0;
           border-right: 1px solid var(--border-05);
           display: flex;
           flex-direction: column;
@@ -140,13 +159,27 @@ export default function Sidebar({
         }
         .workspace-row {
           display: flex;
-          align-items: baseline;
+          align-items: center;
           gap: 6px;
-          padding: 3px 12px 10px;
+          padding: 2px 10px 11px;
           border-bottom: 1px solid var(--border-05);
-          margin-bottom: 6px;
+          margin-bottom: 12px;
           font-family: ui-monospace, Menlo, monospace;
           font-size: 12px;
+        }
+        .collapse {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 22px;
+          height: 22px;
+          margin-left: auto;
+          border-radius: 4px;
+          color: var(--text-dim);
+        }
+        .collapse:hover {
+          color: var(--text-primary);
+          background: var(--overlay-05);
         }
         .workspace-mark {
           color: var(--text-primary);
@@ -158,19 +191,25 @@ export default function Sidebar({
         .workspace-env {
           color: var(--text-muted);
         }
+        /* The nav was a solid block of six rows with no gap, which reads as
+           one object rather than six destinations. Separating the rows and
+           giving each one real height makes the list scannable and the hit
+           targets worth aiming at. */
         .nav-group {
           display: flex;
           flex-direction: column;
-          gap: 0;
-          margin-bottom: 10px;
+          gap: 3px;
+          padding: 0 8px;
+          margin-bottom: 20px;
         }
         .nav-row {
           position: relative;
           display: grid;
           grid-template-columns: 2px 16px 1fr;
           align-items: center;
-          column-gap: 10px;
-          padding: 5px 12px 5px 0;
+          column-gap: 11px;
+          padding: 8px 10px 8px 0;
+          border-radius: 4px;
           font-size: 12.5px;
           font-weight: 400;
           color: var(--text-muted);
@@ -219,26 +258,31 @@ export default function Sidebar({
         }
         .group-label {
           font-family: ui-monospace, Menlo, monospace;
-          font-size: 10px;
+          font-size: 9.5px;
           font-weight: 400;
+          letter-spacing: 0.06em;
           color: var(--text-dim);
-          padding: 2px 12px 4px;
-          text-transform: lowercase;
+          padding: 0 18px 7px;
+          text-transform: uppercase;
         }
         .sidebar-footer {
           margin-top: auto;
-          padding: 8px 12px;
+          display: flex;
+          flex-direction: column;
+        }
+        .status {
+          padding: 9px 14px 10px;
           border-top: 1px solid var(--border-05);
           display: flex;
           flex-direction: column;
-          gap: 3px;
+          gap: 4px;
           font-family: ui-monospace, Menlo, monospace;
         }
         .footer-row {
           display: flex;
           align-items: center;
           gap: 8px;
-          font-size: 11px;
+          font-size: 10.5px;
         }
         .k {
           color: var(--text-dim);
@@ -259,6 +303,11 @@ export default function Sidebar({
         }
         .live-dot.offline {
           background: var(--status-backlog);
+        }
+        /* Keeps the second row's label aligned with the first, which has a
+           status dot in front of it. */
+        .live-dot.spacer {
+          background: transparent;
         }
       `}</style>
     </aside>
