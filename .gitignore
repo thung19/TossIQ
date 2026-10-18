@@ -9,6 +9,8 @@ __pycache__/
 *.ts
 *.onnx
 *.safetensors
+# TypeScript source files inside the frontend workspace are not model weights
+!frontend/**/*.ts
 
 # Captured images (keep test fixtures tracked separately if needed)
 images/*.jpg

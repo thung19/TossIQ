@@ -1,0 +1,127 @@
+@import "@fontsource-variable/inter";
+
+:root {
+  color-scheme: dark;
+
+  /* Core surfaces */
+  --bg: #08090a;
+  --bg-surface: #0f1011;
+  --bg-card: #101112;
+  --bg-elevated: #161718;
+
+  /* Text */
+  --text-primary: #f7f8f8;
+  --text-secondary: #d0d6e0;
+  --text-muted: #8a8f98;
+  --text-dim: #62666d;
+
+  /* Accent */
+  --primary: #5e6ad2;
+  --mention-text: #a5b4fc;
+  --mention-bg: rgba(99, 102, 241, 0.12);
+  --link: #7c87f0;
+
+  /* Borders */
+  --border-05: rgba(255, 255, 255, 0.05);
+  --border-08: rgba(255, 255, 255, 0.08);
+  --border-solid: #23252a;
+
+  /* Overlays */
+  --overlay-02: rgba(255, 255, 255, 0.02);
+  --overlay-05: rgba(255, 255, 255, 0.05);
+  --overlay-08: rgba(255, 255, 255, 0.08);
+
+  /* Status / label dots */
+  --status-in-progress: #f5c842;
+  --status-done: #10b981;
+  --status-bug: #ef4444;
+  --status-backlog: #71717a;
+
+  /* Waste category dots & box strokes (small dots / SVG strokes only — never background fills) */
+  --cat-recycling: #3b82f6;
+  --cat-compost: #10b981;
+  --cat-landfill: #f87171;
+  --cat-unknown: #f5c842;
+}
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+  font-feature-settings: "cv01", "ss03";
+}
+
+html,
+body {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text-primary);
+  font-family: "Inter Variable", system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 18px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+.mono,
+.num {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font-family: inherit;
+  font-feature-settings: "cv01", "ss03";
+  cursor: pointer;
+  background: none;
+  border: none;
+  color: inherit;
+  padding: 0;
+}
+
+input,
+textarea,
+select {
+  font-family: inherit;
+  font-feature-settings: "cv01", "ss03";
+  color: inherit;
+  background: transparent;
+  border: none;
+  outline: none;
+}
+
+code,
+kbd,
+pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+::selection {
+  background: rgba(94, 106, 210, 0.35);
+  color: var(--text-primary);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.1);
+  background-clip: padding-box;
+}
