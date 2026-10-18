@@ -192,66 +192,88 @@ export default function Sidebar({
           color: var(--text-muted);
         }
         /* The nav was a solid block of six rows with no gap, which reads as
-           one object rather than six destinations. Separating the rows and
-           giving each one real height makes the list scannable and the hit
-           targets worth aiming at. */
+           one object rather than six destinations. Each row is now a
+           separately rounded, separately hoverable target with air around it,
+           so the list scans as six things rather than one paragraph.
+
+           These rules are :global() on purpose. The rows are next/link
+           Link elements, and styled-jsx only adds its scoping class to host
+           elements it can see statically -- a custom component gets nothing,
+           so a plain .nav-row rule compiles to .nav-row.jsx-HASH and
+           silently matches none of them. That is why this nav was unstyled
+           until now: the rules existed and never applied. Scoping them under
+           .nav-group, which is a real div and does carry the hash, keeps
+           them from leaking past this component. */
         .nav-group {
           display: flex;
           flex-direction: column;
-          gap: 3px;
+          gap: 6px;
           padding: 0 8px;
-          margin-bottom: 20px;
+          margin-bottom: 24px;
         }
-        .nav-row {
+        .nav-group :global(.nav-row) {
           position: relative;
           display: grid;
-          grid-template-columns: 2px 16px 1fr;
+          grid-template-columns: 3px 16px 1fr;
           align-items: center;
           column-gap: 11px;
-          padding: 8px 10px 8px 0;
-          border-radius: 4px;
+          padding: 9px 10px 9px 0;
+          border-radius: 5px;
           font-size: 12.5px;
           font-weight: 400;
           color: var(--text-muted);
           cursor: pointer;
-          transition: background 0.08s ease, color 0.08s ease;
+          transition: background 0.1s ease, color 0.1s ease;
         }
-        .nav-row:hover {
-          background: var(--overlay-02);
-          color: var(--text-secondary);
+        /* Hover was --overlay-02, i.e. 2% white: technically a highlight,
+           invisible in practice against this background. It needs to be
+           obvious which row the cursor is on. Static rows are excluded --
+           they are not destinations, so offering the affordance would lie. */
+        .nav-group :global(.nav-row:not(.static):hover) {
+          background: var(--overlay-08);
+          color: var(--text-primary);
         }
-        .nav-row:hover .nav-icon {
-          color: var(--text-secondary);
+        .nav-group :global(.nav-row:not(.static):hover .nav-icon) {
+          color: var(--text-primary);
         }
-        .nav-row.active {
-          background: var(--overlay-05);
+        .nav-group :global(.nav-row:not(.static):hover .rail) {
+          background: var(--text-dim);
+        }
+        /* Active is a different colour, not merely a stronger one, so the
+           page you are on never looks like the row you happen to be over. */
+        .nav-group :global(.nav-row.active),
+        .nav-group :global(.nav-row.active:hover) {
+          background: var(--mention-bg);
           color: var(--text-primary);
           font-weight: 510;
         }
-        .nav-row.active .nav-icon {
-          color: var(--text-primary);
+        .nav-group :global(.nav-row.active .nav-icon) {
+          color: var(--mention-text);
         }
-        .nav-row.static {
+        .nav-group :global(.nav-row.active .rail) {
+          background: var(--primary);
+        }
+        .nav-group :global(.nav-row.static) {
           cursor: default;
+          color: var(--text-dim);
         }
-        .rail {
-          width: 2px;
-          height: 16px;
+        .nav-group :global(.rail) {
+          width: 3px;
+          height: 17px;
+          border-radius: 2px;
           background: transparent;
-          margin-left: 0;
+          transition: background 0.1s ease;
         }
-        .nav-row.active .rail {
-          background: var(--text-primary);
-        }
-        .nav-icon {
+        .nav-group :global(.nav-icon) {
           display: inline-flex;
           align-items: center;
           justify-content: center;
           width: 16px;
           height: 16px;
           color: var(--text-dim);
+          transition: color 0.1s ease;
         }
-        .nav-label {
+        .nav-group :global(.nav-label) {
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
@@ -260,9 +282,9 @@ export default function Sidebar({
           font-family: ui-monospace, Menlo, monospace;
           font-size: 9.5px;
           font-weight: 400;
-          letter-spacing: 0.06em;
+          letter-spacing: 0.08em;
           color: var(--text-dim);
-          padding: 0 18px 7px;
+          padding: 0 18px 9px;
           text-transform: uppercase;
         }
         .sidebar-footer {
