@@ -1,5 +1,5 @@
 import { useId, useRef, useState } from 'react';
-import { postJSON } from '../api.js';
+import { postForm, postJSON } from '../api.js';
 
 const EMPTY = { name: '', supplier: '', sku: '', material: '', cost: '' };
 
@@ -9,11 +9,13 @@ const EMPTY = { name: '', supplier: '', sku: '', material: '', cost: '' };
  * image upload still leaves the product added, which the status message says.
  *
  * `prefill` lets another view open this same form already filled in --
- * `{ fields, imageUrl, imageLabel }`. When it carries an `imageUrl` and the
- * operator picks no file of their own, that stored photo is fetched back as a
- * blob and sent through this same reference-image upload, so there is one
- * upload path rather than two. `prefill` is read once, when the form mounts;
- * render a new instance (a different React `key`) to fill it in differently.
+ * `{ fields, eventId, imageLabel }`. When it carries an `eventId` and the
+ * operator picks no file of their own, that event id is sent to the same
+ * reference-image endpoint, which reads the already-stored photo from Object
+ * Storage server-side -- so there is one upload path rather than two, and the
+ * browser never has to re-read a short-lived presigned URL. `prefill` is read
+ * once, when the form mounts; render a new instance (a different React `key`)
+ * to fill it in differently.
  *
  * `products` is optional: omit it to render just the form, without the catalog
  * table underneath.
@@ -26,18 +28,21 @@ export default function CatalogForm({ products, onAdded, title = 'Add catalog it
   const [fields, setFields] = useState(initialFields);
   const [status, setStatus] = useState({ text: '', kind: '' });
   const fileRef = useRef(null);
+  const prefillEventId = prefill?.eventId ?? null;
 
   const set = (key) => (e) => setFields((f) => ({ ...f, [key]: e.target.value }));
 
   /** The operator's own pick wins; otherwise the prefilled stored photo, if any. */
-  async function referenceImageFile() {
+  function referenceImageBody() {
+    const body = new FormData();
     const picked = fileRef.current?.files[0];
-    if (picked) return picked;
-    if (!prefill?.imageUrl) return null;
-    const res = await fetch(prefill.imageUrl);
-    if (!res.ok) throw new Error(`could not read the stored photo (${res.status})`);
-    const blob = await res.blob();
-    return new File([blob], 'reference.jpg', { type: blob.type || 'image/jpeg' });
+    if (picked) {
+      body.append('file', picked);
+      return body;
+    }
+    if (prefillEventId === null) return null;
+    body.append('event_id', String(prefillEventId));
+    return body;
   }
 
   async function handleSubmit(e) {
@@ -54,16 +59,10 @@ export default function CatalogForm({ products, onAdded, title = 'Add catalog it
       setStatus({ text: 'Added.', kind: 'status-good' });
 
       try {
-        const imageFile = await referenceImageFile();
-        if (imageFile) {
+        const imgBody = referenceImageBody();
+        if (imgBody) {
           setStatus({ text: 'Added. Uploading reference image...', kind: 'status-good' });
-          const imgBody = new FormData();
-          imgBody.append('file', imageFile);
-          const imgRes = await fetch(`/products/${product_id}/reference-image`, {
-            method: 'POST',
-            body: imgBody,
-          });
-          if (!imgRes.ok) throw new Error(await imgRes.text());
+          await postForm(`/products/${product_id}/reference-image`, imgBody);
           setStatus({
             text: 'Added, with reference image. Future disposals of this item will match it; past events keep the record they were given.',
             kind: 'status-good',
@@ -103,7 +102,7 @@ export default function CatalogForm({ products, onAdded, title = 'Add catalog it
         <input id={`${idPrefix}ReferenceImage`} ref={fileRef} type="file" accept="image/*" />
         <button type="submit">Add</button>
       </form>
-      {prefill?.imageUrl ? (
+      {prefillEventId !== null ? (
         <div className="status-msg">
           {prefill.imageLabel ?? 'A stored photo will be used as the reference image'} unless you
           choose a file above.

@@ -261,6 +261,12 @@ def insert_waste_event(
 # of disposal photos, so expect to tune it once there is one.
 UNKNOWN_CLUSTER_MAX_DISTANCE = 0.25
 
+# Most recent unmatched events cluster_unknown_events will compare. The
+# grouping is pairwise, so an unbounded window would let one request grow to
+# tens of seconds of pure-Python vector arithmetic; the newest few hundred
+# unmatched events are what a blind-spot report is about anyway.
+UNKNOWN_CLUSTER_MAX_CANDIDATES = 500
+
 # Groups smaller than this are dropped from cluster_unknown_events' output:
 # the point of the view is what an organization throws away *repeatedly* but
 # has never catalogued, and a single sighting is not yet that.
@@ -319,7 +325,11 @@ def find_similar_events(event_id: int, limit: int = 6) -> list[dict]:
         return rows
 
 
-def _cosine_distance(left, right) -> float:
+def _vector_norm(vector) -> float:
+    return math.sqrt(sum(a * a for a in vector))
+
+
+def _cosine_distance(left, right, left_norm=None, right_norm=None) -> float:
     """Cosine distance between two embeddings, defined exactly as Oracle's
     VECTOR_DISTANCE(..., COSINE): 1 - cosine similarity, so 0 is identical.
 
@@ -328,10 +338,15 @@ def _cosine_distance(left, right) -> float:
     arithmetic over 1536 floats avoids both a query per pair and a numeric
     dependency. A zero-magnitude vector has no direction to compare, so it is
     reported as maximally distant (1.0) rather than dividing by zero.
+
+    Either norm may be supplied when the caller already has it, so a vector
+    compared against many others is not re-normed once per pair.
     """
     dot = sum(a * b for a, b in zip(left, right))
-    left_norm = math.sqrt(sum(a * a for a in left))
-    right_norm = math.sqrt(sum(b * b for b in right))
+    if left_norm is None:
+        left_norm = _vector_norm(left)
+    if right_norm is None:
+        right_norm = _vector_norm(right)
     if left_norm == 0.0 or right_norm == 0.0:
         return 1.0
     return 1.0 - dot / (left_norm * right_norm)
@@ -354,6 +369,9 @@ def _group_by_similarity(events: list[dict], max_distance: float) -> list[list[d
     joins whichever seeded first -- which is acceptable for surfacing
     repeatedly-discarded items.
     """
+    # Each candidate's magnitude is a property of the vector alone, so it is
+    # computed once here rather than once per pair it takes part in.
+    norms = [_vector_norm(event["embedding"]) for event in events]
     groups: list[list[dict]] = []
     assigned: set[int] = set()
     for index, seed in enumerate(events):
@@ -364,7 +382,13 @@ def _group_by_similarity(events: list[dict], max_distance: float) -> list[list[d
         for other_index in range(index + 1, len(events)):
             if other_index in assigned:
                 continue
-            if _cosine_distance(seed["embedding"], events[other_index]["embedding"]) <= max_distance:
+            distance = _cosine_distance(
+                seed["embedding"],
+                events[other_index]["embedding"],
+                norms[index],
+                norms[other_index],
+            )
+            if distance <= max_distance:
                 assigned.add(other_index)
                 members.append(events[other_index])
         groups.append(members)
@@ -377,6 +401,7 @@ def cluster_unknown_events(
     days: int = 30,
     max_distance: float = UNKNOWN_CLUSTER_MAX_DISTANCE,
     min_size: int = UNKNOWN_CLUSTER_MIN_SIZE,
+    max_candidates: int = UNKNOWN_CLUSTER_MAX_CANDIDATES,
 ) -> dict:
     """Unknown-item discovery: events in the window that matched no catalog
     product (PRODUCT_ID IS NULL) but do carry an image embedding, grouped by
@@ -386,7 +411,9 @@ def cluster_unknown_events(
     that nobody has catalogued -- so the caller can offer to teach it as a
     catalog product. `unmatched_events` reports how many events were
     considered, so a caller showing no groups can say whether that is because
-    there were no unmatched events or because none repeated.
+    there were no unmatched events or because none repeated. At most
+    `max_candidates` events are considered, the most recent first, because the
+    grouping compares every candidate against every other.
 
     Each group reports `representative_event_id` (the member every other
     member's distance was measured against) rather than a nested copy of that
@@ -402,8 +429,10 @@ def cluster_unknown_events(
               AND image_embedding IS NOT NULL
               AND created_at >= SYSTIMESTAMP - :days
             ORDER BY created_at DESC
+            FETCH FIRST :max_candidates ROWS ONLY
             """,
             days=days,
+            max_candidates=max_candidates,
         )
         candidates = [
             {
@@ -495,6 +524,26 @@ def set_event_embedding(event_id: int, embedding: list[float]) -> None:
         if cursor.rowcount == 0:
             raise LookupError(f"No event with event_id {event_id}")
         conn.commit()
+
+
+def get_event_image_key(event_id: int) -> str | None:
+    """The Object Storage key of an event's stored photo, or None when the
+    event has no image (the upload was skipped or failed).
+
+    Lets a caller reuse an already-stored event photo server-side -- the
+    waste-audit "teach this item" action attaching a group's representative
+    photo as a product's reference image. Raises LookupError when `event_id`
+    does not exist.
+    """
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            "SELECT image_key FROM waste_events WHERE event_id = :event_id",
+            event_id=event_id,
+        )
+        row = cursor.fetchone()
+        if row is None:
+            raise LookupError(f"No event with event_id {event_id}")
+        return row[0]
 
 
 def list_recent_events(limit: int = 20) -> list[dict]:

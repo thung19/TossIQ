@@ -354,12 +354,23 @@ def create_product(product: ProductIn):
 
 
 @app.post("/products/{product_id}/reference-image")
-async def upload_product_reference_image(product_id: int, file: UploadFile = File(...)):
+async def upload_product_reference_image(
+    product_id: int,
+    file: UploadFile | None = File(None),
+    event_id: int | None = Form(None),
+):
     """Uploads a reference photo for a catalog product so future scanned
     items can be matched to it by visual similarity (db.match_product_by_image),
     rather than only by text-overlap against the model's generic object
     description -- per PRD section 2C's "configurable recognition without
     requiring ... retrain[ing]" goal.
+
+    The photo comes either as an uploaded `file` or as the `event_id` of an
+    already-stored disposal event, whose image this reads back from Object
+    Storage server-side -- that is how the waste-audit "teach this item"
+    action reuses a group's representative photo, instead of a browser
+    re-reading a short-lived presigned URL. Exactly one of the two is
+    required.
 
     Unlike the background disposal-event pipeline, this is a captain-facing
     action: an embedding failure is reported as a 500, not silently no-op'd.
@@ -367,7 +378,28 @@ async def upload_product_reference_image(product_id: int, file: UploadFile = Fil
     if not any(p["product_id"] == product_id for p in db.list_products()):
         raise HTTPException(status_code=404, detail=f"Product {product_id} not found")
 
-    contents = await _read_and_validate_upload(file)
+    if (file is None) == (event_id is None):
+        raise HTTPException(
+            status_code=400, detail="Provide exactly one of an uploaded file or an event_id"
+        )
+
+    if file is not None:
+        contents = await _read_and_validate_upload(file)
+    else:
+        try:
+            image_key = db.get_event_image_key(event_id)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        if image_key is None:
+            raise HTTPException(
+                status_code=404, detail=f"Event {event_id} has no stored image to reuse"
+            )
+        contents = oci_storage.download_image(image_key)
+        if contents is None:
+            raise HTTPException(
+                status_code=502, detail=f"Could not read the stored photo for event {event_id}"
+            )
+
     image = _decode_upload(contents)
 
     embedding = image_embed.embed_image(image)

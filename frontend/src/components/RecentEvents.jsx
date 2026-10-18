@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useRef, useState } from 'react';
 import { fetchJSON } from '../api.js';
 import { similarityText } from '../similarity.js';
 import CategoryLabel from './CategoryLabel.jsx';
@@ -18,20 +18,29 @@ export default function RecentEvents({ events }) {
   const [similar, setSimilar] = useState([]);
   const [state, setState] = useState('idle'); // idle | loading | ready | error
   const [error, setError] = useState('');
+  // The open row is the only one whose result may be shown: a slow lookup for
+  // a row the operator has since closed (or swapped for another) would
+  // otherwise land under whichever row is open and be read as its matches.
+  const requestedId = useRef(null);
 
   async function toggleSimilar(eventId) {
     if (openId === eventId) {
+      requestedId.current = null;
       setOpenId(null);
       return;
     }
+    requestedId.current = eventId;
     setOpenId(eventId);
     setSimilar([]);
     setError('');
     setState('loading');
     try {
-      setSimilar(await fetchJSON(`/events/${eventId}/similar?limit=6`));
+      const rows = await fetchJSON(`/events/${eventId}/similar?limit=6`);
+      if (requestedId.current !== eventId) return;
+      setSimilar(rows);
       setState('ready');
     } catch (err) {
+      if (requestedId.current !== eventId) return;
       setError(err.message);
       setState('error');
     }

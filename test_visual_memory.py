@@ -8,13 +8,16 @@ tests drive db._group_by_similarity with fabricated embedding vectors and
 assert on the groups it returns -- observable grouping behaviour, not the
 source of the algorithm. They use short vectors rather than real 1536-dim
 Cohere embeddings because the grouping is dimension-agnostic; only the
-VECTOR(1536) column binding cares about width.
+VECTOR(1536) column binding cares about width. The reference-image endpoint
+tests drive the real route through FastAPI's TestClient with storage and
+embedding mocked, so what they assert is the HTTP behaviour a browser sees.
 """
 
 import io
 import unittest
 from unittest import mock
 
+from fastapi.testclient import TestClient
 from PIL import Image
 
 import api
@@ -396,6 +399,96 @@ class BackfillTests(unittest.TestCase):
         self.assertEqual(tally["embedded"], 0)
         download.assert_not_called()
         embed.assert_not_called()
+        store.assert_not_called()
+
+
+class ReferenceImageFromStoredEventTests(unittest.TestCase):
+    """POST /products/{id}/reference-image accepts a stored event's id instead
+    of an upload, so teaching an item from a cluster reuses the photo already
+    in Object Storage rather than the browser re-reading a presigned URL."""
+
+    @staticmethod
+    def _jpeg_bytes():
+        buffer = io.BytesIO()
+        Image.new("RGB", (4, 4)).save(buffer, format="JPEG")
+        return buffer.getvalue()
+
+    def setUp(self):
+        self.client = TestClient(api.app)
+        self.products = [{"product_id": 3, "product_name": "tray"}]
+
+    def test_an_event_id_attaches_the_stored_photos_embedding_to_the_product(self):
+        with (
+            mock.patch.object(db, "list_products", return_value=self.products),
+            mock.patch.object(db, "get_event_image_key", return_value="events/9.jpg"),
+            mock.patch.object(oci_storage, "download_image", return_value=self._jpeg_bytes()) as download,
+            mock.patch.object(image_embed, "embed_image", return_value=[0.3] * 4),
+            mock.patch.object(db, "set_product_reference_embedding") as store,
+        ):
+            response = self.client.post("/products/3/reference-image", data={"event_id": 9})
+
+        self.assertEqual(response.status_code, 200)
+        download.assert_called_once_with("events/9.jpg")
+        store.assert_called_once_with(3, [0.3] * 4)
+
+    def test_an_uploaded_file_still_wins_its_own_path(self):
+        with (
+            mock.patch.object(db, "list_products", return_value=self.products),
+            mock.patch.object(db, "get_event_image_key") as key,
+            mock.patch.object(image_embed, "embed_image", return_value=[0.4] * 4),
+            mock.patch.object(db, "set_product_reference_embedding") as store,
+        ):
+            response = self.client.post(
+                "/products/3/reference-image",
+                files={"file": ("ref.jpg", self._jpeg_bytes(), "image/jpeg")},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        key.assert_not_called()
+        store.assert_called_once_with(3, [0.4] * 4)
+
+    def test_neither_a_file_nor_an_event_id_is_rejected(self):
+        with (
+            mock.patch.object(db, "list_products", return_value=self.products),
+            mock.patch.object(db, "set_product_reference_embedding") as store,
+        ):
+            response = self.client.post("/products/3/reference-image", data={})
+
+        self.assertEqual(response.status_code, 400)
+        store.assert_not_called()
+
+    def test_an_unknown_event_id_is_a_404(self):
+        with (
+            mock.patch.object(db, "list_products", return_value=self.products),
+            mock.patch.object(db, "get_event_image_key", side_effect=LookupError("No event with event_id 99")),
+            mock.patch.object(db, "set_product_reference_embedding") as store,
+        ):
+            response = self.client.post("/products/3/reference-image", data={"event_id": 99})
+
+        self.assertEqual(response.status_code, 404)
+        store.assert_not_called()
+
+    def test_an_event_with_no_stored_image_is_a_404(self):
+        with (
+            mock.patch.object(db, "list_products", return_value=self.products),
+            mock.patch.object(db, "get_event_image_key", return_value=None),
+            mock.patch.object(db, "set_product_reference_embedding") as store,
+        ):
+            response = self.client.post("/products/3/reference-image", data={"event_id": 9})
+
+        self.assertEqual(response.status_code, 404)
+        store.assert_not_called()
+
+    def test_an_unreadable_stored_object_leaves_the_product_without_a_reference(self):
+        with (
+            mock.patch.object(db, "list_products", return_value=self.products),
+            mock.patch.object(db, "get_event_image_key", return_value="events/9.jpg"),
+            mock.patch.object(oci_storage, "download_image", return_value=None),
+            mock.patch.object(db, "set_product_reference_embedding") as store,
+        ):
+            response = self.client.post("/products/3/reference-image", data={"event_id": 9})
+
+        self.assertEqual(response.status_code, 502)
         store.assert_not_called()
 
 

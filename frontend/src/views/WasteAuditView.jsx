@@ -85,7 +85,11 @@ export default function WasteAuditView({ hidden, products, onProductAdded }) {
       <div className="panel">
         <h2>
           Unidentified item groups
-          {report ? ` — ${clusters.length} of ${report.unmatched_events} unmatched events` : ''}
+          {report
+            ? ` — ${clusters.length} group${clusters.length === 1 ? '' : 's'} across ${
+                report.unmatched_events
+              } unmatched events`
+            : ''}
         </h2>
 
         {state === 'loading' && !report ? (
@@ -170,7 +174,7 @@ export default function WasteAuditView({ hidden, products, onProductAdded }) {
                       name: representative.detected_object ?? '',
                       material: representative.material ?? '',
                     },
-                    imageUrl: representative.image_url,
+                    eventId: representative.event_id,
                     imageLabel: `The representative photo from this group (event ${representative.event_id}) will be used as the reference image`,
                   }}
                 />
