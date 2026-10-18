@@ -137,7 +137,8 @@ def list_products() -> list[dict]:
                    detected_as, material, material_subtype, unit_cost,
                    unit_weight_grams, disposal_category, recyclable, reusable,
                    case_pack_qty, case_cost, active,
-                   substitute_sku, substitute_note, substitute_kind, expected_uses
+                   substitute_sku, substitute_note, substitute_kind, expected_uses,
+                   servings_per_week, menu_station
             FROM products
             ORDER BY product_name
             """
@@ -406,6 +407,7 @@ def fill_null_product_columns(sku: str, columns: dict) -> int:
         "unit_cost", "unit_weight_grams", "disposal_category", "recyclable",
         "reusable", "case_pack_qty", "case_cost", "active",
         "substitute_sku", "substitute_note", "substitute_kind", "expected_uses",
+        "servings_per_week", "menu_station",
     }
     unknown = set(columns) - allowed
     if unknown:
@@ -1059,6 +1061,63 @@ def edible_food_waste(days: int = 30) -> list[dict]:
             }
             for row in cursor.fetchall()
         ]
+
+
+
+def dish_waste_rates(days: int = 30, building_id: int | None = None) -> list[dict]:
+    """Uneaten servings per dish, against what the kitchen makes.
+
+    The count alone says a dish is being thrown away; the rate says whether
+    that is a problem. Forty wraps in the bin is awful if you made sixty
+    and unremarkable if you made nine hundred, and only the second number
+    makes "produce fewer" an instruction rather than a scolding.
+
+    SERVINGS_PER_WEEK is production data the kitchen supplies, not
+    something the bins can observe, so it is scaled to the window here and
+    the caller reports it as an input.
+    """
+    clauses = []
+    binds: dict = {"days": days}
+    if building_id is not None:
+        clauses.append("AND c.building_id = :building_id")
+        binds["building_id"] = building_id
+
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            f"""
+            SELECT p.sku, p.product_name, p.menu_station, p.servings_per_week,
+                   p.unit_cost, p.unit_weight_grams,
+                   COUNT(*) AS uneaten,
+                   COUNT(DISTINCT c.building_id) AS buildings
+            FROM waste_events we
+            JOIN products p ON p.product_id = we.product_id
+            LEFT JOIN cans c ON c.can_id = we.bin_id
+            WHERE p.servings_per_week IS NOT NULL
+              AND we.created_at >= SYSTIMESTAMP - :days
+              {" ".join(clauses)}
+            GROUP BY p.sku, p.product_name, p.menu_station, p.servings_per_week,
+                     p.unit_cost, p.unit_weight_grams
+            ORDER BY COUNT(*) DESC
+            """,
+            **binds,
+        )
+        rows = []
+        for (sku, name, station, per_week, cost, grams, uneaten, buildings) in cursor.fetchall():
+            produced = float(per_week) * days / 7.0
+            rows.append({
+                "sku": sku,
+                "product_name": name,
+                "menu_station": station,
+                "servings_per_week": int(per_week),
+                "produced_in_window": round(produced, 1),
+                "uneaten": uneaten,
+                "waste_rate": round(100.0 * uneaten / produced, 1) if produced else None,
+                "unit_cost": float(cost) if cost is not None else None,
+                "cost_wasted": round(float(cost or 0) * uneaten, 2),
+                "grams_wasted": round(float(grams or 0) * uneaten, 1),
+                "buildings": buildings,
+            })
+        return rows
 
 
 def analytics_filter_options(days: int | None = 30) -> dict:

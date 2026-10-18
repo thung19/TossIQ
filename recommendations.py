@@ -64,6 +64,16 @@ MIN_ANNUAL_CO2E_KG = 100.0
 # effect: a contaminated load gets rejected whole.
 MIN_MISROUTE_ITEMS = 25
 
+# A dish is flagged when it comes back this many times the menu's typical
+# rate AND clears an absolute floor. Judged against its peers rather than
+# an absolute number because some loss is unavoidable in a servery and
+# what that floor is depends on the operation; the honest test is whether
+# one dish stands out among the others.
+DISH_OUTLIER_RATIO = 2.0
+DISH_WASTE_FLOOR = 6.0
+# Below this many dishes there is no menu to compare against, only a list.
+MIN_MENU_DISHES = 4
+
 # Most cards any one rule may contribute. Six buildings showing the same
 # placement problem is six real findings and one thing to do; listing them
 # all buries every other kind of recommendation under a single pattern.
@@ -184,6 +194,19 @@ def _mass(grams: float) -> str:
     return f"{grams:.0f} g"
 
 
+def _median(values: list[float]) -> float:
+    """Integer-ish median over a small list. The menu's typical waste rate
+    is a median rather than a mean so one badly over-made dish cannot drag
+    the comparison it is being judged against up towards itself."""
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return float(ordered[middle])
+    return (ordered[middle - 1] + ordered[middle]) / 2.0
+
+
 def _plain_item(name: str) -> str:
     """Catalog names carry a disambiguating parenthetical -- "Pizza Crust
     (uneaten)" -- which is right in a table and wrong mid-sentence."""
@@ -210,6 +233,7 @@ def build_context(days: int) -> dict:
         "activity": fleet.activity_heatmap(days=min(days, 30)),
         "edible_food": db.edible_food_waste(days=days),
         "misrouted": db.analytics_misrouted(days=days, limit=40),
+        "dish_waste": db.dish_waste_rates(days=days),
     }
 
 
@@ -757,6 +781,17 @@ def reduce_food_portions(context: dict) -> list[dict]:
     """
     days = context["days"]
     rows = context["edible_food"]
+    # Dishes the sharper rule already covers. A building card that says
+    # "led by the halloumi wrap" beside a card that says "make fewer
+    # halloumi wraps, here is the production figure" is the same finding
+    # twice, and the weaker one wins the ranking by being broader.
+    already_named = {
+        entry["product_name"].lower()
+        for entry in context.get("dish_waste", [])
+        if entry["waste_rate"] is not None
+        and entry["waste_rate"] >= DISH_WASTE_FLOOR
+        and entry["uneaten"] >= MIN_OBSERVATIONS
+    }
     by_building: dict[str, list[dict]] = {}
     for row in rows:
         by_building.setdefault(row["building"] or "unattributed", []).append(row)
@@ -770,6 +805,8 @@ def reduce_food_portions(context: dict) -> list[dict]:
 
         annual_cost = _annualise(cost, days)
         worst = max(items, key=lambda item: item["cost"])
+        if worst["item"].lower() in already_named:
+            continue
         grams = sum(item["grams"] for item in items)
         # Food is the heaviest line in the emission table by a distance: its
         # footprint is the farming, water and transport behind it, almost all
@@ -827,6 +864,112 @@ def reduce_food_portions(context: dict) -> list[dict]:
         ))
 
     out.sort(key=lambda r: r["annual_saving"] or 0, reverse=True)
+    return out
+
+
+def reduce_overproduced_dishes(context: dict) -> list[dict]:
+    """Dishes coming back uneaten far more often than the rest of the menu.
+
+    This is the recommendation a count of plate scrapings cannot make. A
+    generic "there is food waste at Rand" tells a chef nothing they did not
+    know; "eighteen per cent of the halloumi wraps you make come back,
+    against three per cent for everything else" names the dish, the size of
+    the problem and the comparison that makes it a problem.
+
+    Judged against the rest of the menu rather than an absolute figure.
+    Some loss is unavoidable in a servery, and what that floor is depends
+    on the operation, so the honest test is whether one dish is an outlier
+    among its own peers.
+    """
+    rows = context["dish_waste"]
+    if len(rows) < MIN_MENU_DISHES:
+        return []
+
+    rated = [row for row in rows if row["waste_rate"] is not None]
+    if len(rated) < MIN_MENU_DISHES:
+        return []
+    typical = _median([round(row["waste_rate"]) for row in rated]) or 1
+
+    out = []
+    for row in rated:
+        if row["uneaten"] < MIN_OBSERVATIONS:
+            continue
+        if row["waste_rate"] < DISH_WASTE_FLOOR:
+            continue
+        if row["waste_rate"] < typical * DISH_OUTLIER_RATIO:
+            continue
+
+        annual_cost = _annualise(row["cost_wasted"], context["days"])
+        annual_co2e = (
+            _annualise(row["grams_wasted"], context["days"]) / 1000.0
+            * impact.EMBODIED_CO2E_BY_SUBTYPE["edible food"]
+        )
+        # Bringing it to the menu's typical rate, which is the achievable
+        # target: the rest of the kitchen already runs there. Expressed per
+        # WEEK, because that is the unit production is planned in, and
+        # because the first version divided by weeks and then by seven
+        # again and arrived at a per-day figure labelled per-service.
+        recoverable = row["uneaten"] * (1 - typical / row["waste_rate"])
+        weekly_cut = max(1, round(recoverable / (context["days"] / 7.0)))
+        new_weekly = max(1, row["servings_per_week"] - weekly_cut)
+
+        out.append(recommendation(
+            key=f"dish:{row['sku']}",
+            kind="food",
+            title=f"Make fewer {row['product_name']}",
+            summary=(
+                f"{row['waste_rate']:.0f}% of this dish comes back uneaten, against "
+                f"{typical}% across the rest of the menu. "
+                f"{row['uneaten']} of {row['produced_in_window']:.0f} servings went in "
+                f"the bin over {context['days']} days, {_money(row['cost_wasted'])} of food."
+            ),
+            action=(
+                f"Cut production at the {row['menu_station'] or 'relevant'} station from "
+                f"{row['servings_per_week']} to about {new_weekly} a week, or keep the "
+                "count and reduce the portion. Re-measure after two weeks."
+            ),
+            annual_saving=annual_cost,
+            annual_co2e_kg=annual_co2e,
+            confidence="high" if row["uneaten"] >= MIN_OBSERVATIONS * 3 else "medium",
+            window_days=context["days"],
+            basis=(
+                "Uneaten servings counted from disposals the vision model named as this "
+                "dish, over servings made in the same period. Production comes from the "
+                "catalog's SERVINGS_PER_WEEK, which the kitchen supplies."
+            ),
+            caveat=(
+                "Production volume is an input, not something the bins can see, so the "
+                "rate is only as good as that figure. A dish can also come back because "
+                "it is badly timed or badly placed on the line rather than over-made; "
+                "this says which dish, not why."
+            ),
+            evidence=[
+                metric("Comes back uneaten", f"{row['waste_rate']:.0f}%",
+                       f"against {typical}% across the menu"),
+                metric("Servings binned", f"{row['uneaten']:,}",
+                       f"of {row['produced_in_window']:,.0f} made in {context['days']} days"),
+                metric("Food cost binned", _money(row["cost_wasted"]),
+                       f"at {_money(row['unit_cost'] or 0)} a serving"),
+                metric("Projected annual saving", _money(annual_cost),
+                       "if brought to the menu's typical rate"),
+                metric("Suggested weekly production",
+                       f"{row['servings_per_week']} to {new_weekly}",
+                       f"about {_plural(weekly_cut, 'serving')} a week fewer"),
+                table(
+                    "Against the rest of the menu",
+                    ["dish", "station", "made", "binned", "comes back"],
+                    [[entry["product_name"], entry["menu_station"] or "-",
+                      f"{entry['produced_in_window']:,.0f}", f"{entry['uneaten']:,}",
+                      f"{entry['waste_rate']:.1f}%"]
+                     for entry in sorted(rated, key=lambda e: -e["waste_rate"])],
+                    "Every dish the kitchen reports production for. The comparison is "
+                    "the point: some loss is unavoidable, and the question is whether "
+                    "one dish is an outlier among its peers.",
+                ),
+            ],
+        ))
+
+    out.sort(key=lambda item: -(item["annual_saving"] or 0))
     return out
 
 
@@ -1126,6 +1269,7 @@ def capacity_ceiling(context: dict) -> list[dict]:
 
 RULES = (
     switch_products,
+    reduce_overproduced_dishes,
     reduce_food_portions,
     add_or_relocate_cans,
     rebalance_within_building,

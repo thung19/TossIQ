@@ -313,6 +313,36 @@ def catalog_rows() -> list[dict]:
     """CATALOG as dicts keyed by CATALOG_FIELDS."""
     return [dict(zip(CATALOG_FIELDS, row)) for row in CATALOG]
 
+# Prepared dishes served at the dining halls, and what the kitchen makes of
+# each in a week.
+#
+# SERVINGS_PER_WEEK is the denominator that turns "forty wraps in the bin"
+# into "eighteen per cent of the wraps we make come back", which is the
+# only version of that fact anybody can act on. It is production data a
+# dining operation keeps and a waste system cannot see, so it is an input
+# here, not a measurement, and the recommendation built on it says so.
+#
+# (sku, dish, station, cost per serving, plate weight g, servings/week)
+MENU_DISHES = [
+    ("DISH-WRAP-HALLOUMI", "Halloumi and Roasted Veg Wrap", "Grill",
+     4.10, 240.0, 70),
+    ("DISH-BOWL-SALMON", "Teriyaki Salmon Bowl", "World",
+     6.85, 310.0, 45),
+    ("DISH-CHILI-BEEF", "Beef Chili, bowl", "Soup and Chili",
+     3.60, 330.0, 120),
+    ("DISH-MAC-CHEESE", "Macaroni Cheese, side", "Comfort",
+     1.95, 180.0, 200),
+    ("DISH-SALAD-CAESAR", "Grilled Chicken Caesar Salad", "Greens",
+     5.40, 280.0, 150),
+    ("DISH-PIZZA-MARG", "Margherita Pizza, slice", "Pizza",
+     2.20, 150.0, 300),
+    ("DISH-BURRITO-BFAST", "Breakfast Burrito", "Grill",
+     3.95, 260.0, 90),
+    ("DISH-POTATO-ROAST", "Roast Potatoes, side", "Comfort",
+     1.40, 160.0, 250),
+]
+
+
 # Vision labels that deliberately resolve to no catalog product. "mixed trash"
 # names a bag of unidentifiable material and "bottle" / "water bottle" / "cup"
 # are the generic fallbacks the detector emits when it cannot read a brand.
@@ -437,6 +467,38 @@ def complete_legacy_products() -> int:
             continue
         filled += db.fill_null_product_columns(sku, columns)
     return filled
+
+
+def seed_menu_dishes() -> int:
+    """Adds the prepared dishes, each tagged as edible food.
+
+    DETECTED_AS is the dish name itself: the advanced vision path can read a
+    tray and name what is on it, which is what makes dish-level waste
+    visible at all. A generic "plate scrapings" row can only ever support
+    "there is food waste", never "stop making so many wraps".
+    """
+    inserted = 0
+    for sku, name, station, cost, grams, servings in MENU_DISHES:
+        if db.product_id_for_sku(sku) is not None:
+            continue
+        db.upsert_product_by_sku(
+            sku,
+            product_name=name,
+            supplier="Campus Dining",
+            detected_as=name.lower(),
+            material="organic",
+            material_subtype="edible food",
+            unit_cost=cost,
+            unit_weight_grams=grams,
+            disposal_category="compost",
+            recyclable=0,
+            reusable=0,
+            servings_per_week=servings,
+            menu_station=station,
+            active=1,
+        )
+        inserted += 1
+    return inserted
 
 
 def seed_reusable_programmes() -> int:
@@ -630,6 +692,7 @@ def main() -> None:
     inserted, present = seed_products()
     print(f"  products:        {inserted} new, {present} already present")
     print(f"  legacy filled:   {complete_legacy_products()} column(s) on pre-002 rows")
+    print(f"  menu dishes:     {seed_menu_dishes()} new dish(es)")
     print(f"  reusables:       {seed_reusable_programmes()} new programme(s)")
     print(f"  substitutions:   {apply_substitutions()} column(s) recorded")
 

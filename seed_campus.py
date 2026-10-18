@@ -155,7 +155,12 @@ MATERIAL_BY_CATEGORY = {
 # out rather than randomised so the fleet layout is reviewable and stable.
 # (building_code, [model_code per can])
 CAN_LAYOUT = [
-    ("VU-RAND", ["TQ-H-240", "TQ-H-240", "TQ-S-120", "TQ-S-120", "TQ-L-90"]),
+    # Rand is the busiest servery on campus and the building the food-waste
+    # work is aimed at, so it carries the most units: three high-traffic
+    # bins on the servery floor plus the tray return, where uneaten food
+    # actually arrives.
+    ("VU-RAND", ["TQ-H-240", "TQ-H-240", "TQ-S-120", "TQ-S-120", "TQ-L-90",
+                 "TQ-H-240", "TQ-H-240", "TQ-S-120"]),
     ("VU-SARRATT", ["TQ-H-240", "TQ-S-120", "TQ-S-120", "TQ-L-90"]),
     ("VU-COMMONS", ["TQ-H-240", "TQ-S-120", "TQ-S-120", "TQ-L-90"]),
     ("VU-LIBRARY", ["TQ-S-120", "TQ-S-120", "TQ-S-120", "TQ-L-90"]),
@@ -176,6 +181,18 @@ PLACEMENT_NOTES = [
     "north entrance", "south entrance", "main lobby", "by the elevators",
     "servery exit", "outside the loading door", "central atrium", "stairwell landing",
 ]
+
+# Where a building's cans actually sit, when the generic list above would
+# be wrong. A dining hall's bins are at the tray return and the servery
+# counters, and saying so is what makes "move the quiet one" an instruction
+# somebody can follow.
+PLACEMENT_BY_BUILDING = {
+    "VU-RAND": [
+        "tray return belt", "servery exit, hot line", "servery exit, grill",
+        "beverage station", "main entrance", "tray return, second belt",
+        "servery exit, deli", "seating area, east",
+    ],
+}
 
 # Two cans stand for real reporting hardware rather than the mock fleet, and
 # are the targets the legacy free-text LOCATION strings are attributed to.
@@ -289,6 +306,15 @@ def can_position(rng: random.Random, building_latitude: float, building_longitud
     )
 
 
+def _placement_note(building_code: str, index: int, rng: random.Random) -> str:
+    """Where this can sits. Building-specific where we know it, generic
+    otherwise."""
+    specific = PLACEMENT_BY_BUILDING.get(building_code)
+    if specific and index <= len(specific):
+        return specific[index - 1]
+    return PLACEMENT_NOTES[rng.randrange(len(PLACEMENT_NOTES))]
+
+
 def seed_cans(models: dict[str, dict], buildings: dict[str, int]) -> dict[str, dict]:
     """Inserts the physical fleet, returning can_code -> {can_id, model_code, profile}."""
     rng = random.Random(RANDOM_SEED)
@@ -305,7 +331,7 @@ def seed_cans(models: dict[str, dict], buildings: dict[str, int]) -> dict[str, d
                 model_id=models[model_code]["model_id"],
                 building_id=buildings[building_code],
                 floor=rng.choice(["1", "1", "1", "2", "G"]),
-                placement_note=PLACEMENT_NOTES[rng.randrange(len(PLACEMENT_NOTES))],
+                placement_note=_placement_note(building_code, index, rng),
                 latitude=can_latitude,
                 longitude=can_longitude,
                 installed_on=datetime(2026, 1, 1) + timedelta(days=rng.randrange(0, 250)),

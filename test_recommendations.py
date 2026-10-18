@@ -636,5 +636,106 @@ class MaterialityTests(unittest.TestCase):
         self.assertIn("LCA", report["impact_disclaimer"])
 
 
+class OverproducedDishTests(unittest.TestCase):
+    """The recommendation a count of plate scrapings cannot make. "There is
+    food waste at Rand" tells a chef nothing they did not know; "18% of the
+    halloumi wraps come back, against 3% for the rest of the menu" names
+    the dish and the size of the problem."""
+
+    def dish(self, sku, name, made, binned, cost=4.0, station="Grill") -> dict:
+        return {
+            "sku": sku, "product_name": name, "menu_station": station,
+            "servings_per_week": round(made / 30 * 7), "produced_in_window": made,
+            "uneaten": binned, "waste_rate": round(100.0 * binned / made, 1),
+            "unit_cost": cost, "cost_wasted": round(cost * binned, 2),
+            "grams_wasted": binned * 240.0, "buildings": 2,
+        }
+
+    def menu(self, extra=()) -> list[dict]:
+        base = [
+            self.dish("A", "Pizza Slice", 1200, 36),
+            self.dish("B", "Mac and Cheese", 800, 28),
+            self.dish("C", "Caesar Salad", 600, 18),
+            self.dish("D", "Breakfast Burrito", 400, 10),
+        ]
+        return base + list(extra)
+
+    def run_rule(self, dishes, days=30):
+        return rec.reduce_overproduced_dishes({"days": days, "dish_waste": dishes})
+
+    def test_an_outlier_dish_is_flagged_with_its_rate(self):
+        out = self.run_rule(self.menu([self.dish("X", "Halloumi Wrap", 300, 54)]))
+        self.assertEqual(len(out), 1)
+        self.assertIn("Halloumi Wrap", out[0]["title"])
+        self.assertIn("18%", out[0]["summary"])
+
+    def test_a_menu_running_evenly_produces_nothing(self):
+        """Some loss is unavoidable in a servery. Flagging every dish would
+        be flagging the business of cooking."""
+        self.assertEqual(self.run_rule(self.menu()), [])
+
+    def test_the_comparison_is_against_the_menu_not_an_absolute(self):
+        """A kitchen where everything runs at 12% has no outlier, even
+        though 12% clears the absolute floor on its own."""
+        even = [self.dish(str(i), f"Dish {i}", 500, 60) for i in range(5)]
+        self.assertEqual(self.run_rule(even), [])
+
+    def test_a_high_rate_over_a_handful_of_servings_is_not_evidence(self):
+        out = self.run_rule(self.menu([self.dish("X", "Special", 20, 6)]))
+        self.assertEqual(out, [])
+
+    def test_too_few_dishes_is_a_list_not_a_menu(self):
+        """With nothing to compare against there is no outlier to find."""
+        out = self.run_rule([self.dish("X", "Halloumi Wrap", 300, 54)])
+        self.assertEqual(out, [])
+
+    def test_the_action_is_in_servings_per_week(self):
+        """That is the unit production is planned in. The first version
+        divided by weeks and then by seven again and reported a per-day
+        figure labelled per-service."""
+        out = self.run_rule(self.menu([self.dish("X", "Halloumi Wrap", 300, 54)]))
+        self.assertIn("a week", out[0]["action"])
+        self.assertIn("Grill", out[0]["action"])
+
+    def test_the_target_is_the_menu_rate_not_zero(self):
+        """The rest of the kitchen already runs at the typical rate, so
+        that is what is achievable. Proposing zero waste is not advice."""
+        out = self.run_rule(self.menu([self.dish("X", "Halloumi Wrap", 300, 54)]))
+        made = 70
+        # Suggested production is cut, but nowhere near to nothing.
+        self.assertIn("70 to about", out[0]["action"])
+        self.assertNotIn("to about 0", out[0]["action"])
+
+    def test_the_caveat_says_production_is_an_input(self):
+        """The rate is only as good as a number the bins cannot see."""
+        out = self.run_rule(self.menu([self.dish("X", "Halloumi Wrap", 300, 54)]))
+        self.assertIn("input", out[0]["caveat"])
+
+    def test_evidence_shows_the_whole_menu_for_comparison(self):
+        out = self.run_rule(self.menu([self.dish("X", "Halloumi Wrap", 300, 54)]))
+        table = [b for b in out[0]["evidence"] if b["type"] == "table"][0]
+        self.assertEqual(len(table["rows"]), 5)
+
+    def test_the_building_card_stands_down_where_a_dish_card_names_it(self):
+        """The same finding twice, with the weaker one winning the ranking
+        by being broader."""
+        context_rows = {
+            "days": 30,
+            "edible_food": [{"building": "Rand Hall", "item": "Halloumi Wrap",
+                             "count": 54, "cost": 216.0, "grams": 12960.0}],
+            "dish_waste": self.menu([self.dish("X", "Halloumi Wrap", 300, 54)]),
+        }
+        self.assertEqual(rec.reduce_food_portions(context_rows), [])
+
+    def test_the_building_card_still_fires_for_waste_no_dish_explains(self):
+        context_rows = {
+            "days": 30,
+            "edible_food": [{"building": "Rand Hall", "item": "Plate Scrapings",
+                             "count": 54, "cost": 216.0, "grams": 12960.0}],
+            "dish_waste": self.menu(),
+        }
+        self.assertEqual(len(rec.reduce_food_portions(context_rows)), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
