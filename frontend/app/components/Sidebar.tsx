@@ -126,9 +126,7 @@ export default function Sidebar({
   return (
     <aside className="sidebar">
       <div className="workspace-row">
-        <span className="workspace-mark">tossiq</span>
-        <span className="workspace-sep">/</span>
-        <span className="workspace-env">ops</span>
+        <span className="workspace-mark">TossIQ</span>
         {onCollapse && (
           <button className="collapse" onClick={onCollapse} title="Hide sidebar (⌘B)">
             {Icon.collapse}
@@ -217,12 +215,7 @@ export default function Sidebar({
         .workspace-mark {
           color: var(--text-primary);
           font-weight: 510;
-        }
-        .workspace-sep {
-          color: var(--text-dim);
-        }
-        .workspace-env {
-          color: var(--text-muted);
+          letter-spacing: 0.01em;
         }
         /* The nav was a solid block of six rows with no gap, which reads as
            one object rather than six destinations. Each row is now a
