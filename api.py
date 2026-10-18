@@ -9,6 +9,9 @@ Two sorting entry points, matching the PRD's two-layer architecture:
 - POST /classify -- direct advanced-analysis path (Layer 2 only). Used for
                      testing; also persists its result.
 
+POST /asku answers a plain-language question about the logged analytics with
+an OCI Generative AI chat model that is shown only those aggregates (asku.py).
+
 Everything else (catalog, dashboard stats, recommendations) is plain CRUD/
 aggregation over the OCI-backed tables in db.py (Layer 3).
 
