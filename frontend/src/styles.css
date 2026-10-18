@@ -292,3 +292,52 @@
   @media (max-width: 480px) {
     .result-row { grid-template-columns: 1fr; gap: 2px; }
   }
+
+  /* Similar-item search (expanded under a recent-events row) */
+  .btn-inline { padding: 4px 9px; font-size: 11px; background: none; color: var(--ink); border: 1px solid var(--baseline); }
+  .similar-row > td { white-space: normal; background: var(--plane); }
+  .similar-caption { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+  .similar-strip { display: flex; flex-wrap: wrap; gap: 12px; }
+  .similar-card {
+    display: flex; gap: 8px; align-items: center;
+    background: var(--surface); border: 1px solid var(--gridline);
+    border-radius: 5px; padding: 7px 9px; min-width: 0;
+  }
+  .similar-meta { min-width: 0; }
+  .similar-object {
+    font-size: 12px; color: var(--ink); text-transform: capitalize;
+    max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .similar-score { font-size: 11px; color: var(--ink-secondary); font-variant-numeric: tabular-nums; }
+  .similar-when { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  /* Waste audit -- unknown-item clusters */
+  .audit-explainer p { font-size: 13px; line-height: 1.55; color: var(--ink-secondary); margin: 0 0 10px; }
+  .audit-explainer p:last-child { margin-bottom: 0; }
+  .audit-explainer strong { color: var(--ink); font-weight: 600; }
+  .audit-explainer code {
+    font-size: 12px; background: var(--plane); border: 1px solid var(--gridline);
+    border-radius: 3px; padding: 1px 4px;
+  }
+  .audit-caveat { color: var(--muted) !important; font-size: 12px !important; }
+  .audit-followups p { font-size: 12px; line-height: 1.55; color: var(--muted); margin: 0; }
+  .audit-cluster {
+    border: 1px solid var(--gridline); border-radius: 6px;
+    padding: 14px; margin-bottom: 14px; background: var(--plane);
+  }
+  .audit-cluster:last-child { margin-bottom: 0; }
+  .audit-cluster-head {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    gap: 12px; flex-wrap: wrap; margin-bottom: 12px;
+  }
+  .audit-count { font-size: 17px; font-weight: 600; color: var(--ink); }
+  .audit-window { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .audit-thumbs { display: flex; flex-wrap: wrap; gap: 8px; }
+  .audit-thumb { border: 2px solid transparent; border-radius: 6px; line-height: 0; }
+  .audit-thumb.is-representative { border-color: var(--ink-secondary); }
+  .audit-thumb .event-thumb, .audit-thumb .event-thumb-placeholder { width: 64px; height: 64px; }
+  .audit-cluster-meta {
+    display: flex; flex-wrap: wrap; gap: 6px 20px;
+    font-size: 12px; color: var(--ink-secondary); margin-top: 12px;
+  }
+  .audit-cluster .panel { margin-top: 14px; background: var(--surface); }

@@ -53,8 +53,6 @@ export const PLACEHOLDER_TEXT = {
     'This section is not yet built. A later stage of the roadmap will add smart bin monitoring here.',
   'waste-analytics':
     'This section is not yet built. A later stage of the roadmap will add deeper waste analytics here.',
-  'ai-insights':
-    'This section is not yet built. A later stage of the roadmap will add AI-driven insights and waste audits here.',
   'procurement-intelligence':
     'This section is not yet built. A later stage of the roadmap will add procurement intelligence here.',
   'ask-tossiq':

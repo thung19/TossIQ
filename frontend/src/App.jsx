@@ -7,6 +7,7 @@ import DashboardView from './views/DashboardView.jsx';
 import HazardDetectionView from './views/HazardDetectionView.jsx';
 import IdentifyItemView from './views/IdentifyItemView.jsx';
 import PlaceholderView from './views/PlaceholderView.jsx';
+import WasteAuditView from './views/WasteAuditView.jsx';
 
 export default function App() {
   const [activeView, setActiveView] = useState('dashboard');
@@ -54,6 +55,11 @@ export default function App() {
             hidden={activeView !== 'hazard-detection'}
             hazards={data.hazards}
             onStatusChanged={data.refreshHazards}
+          />
+          <WasteAuditView
+            hidden={activeView !== 'ai-insights'}
+            products={data.products}
+            onProductAdded={data.refreshProducts}
           />
           <IdentifyItemView hidden={activeView !== 'identify-item'} />
           {Object.entries(PLACEHOLDER_TEXT).map(([viewId, text]) => (

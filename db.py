@@ -10,6 +10,7 @@ works for a hackathon demo's request volume. Swap for a oracledb.create_pool()
 if this becomes a bottleneck.
 """
 
+import math
 import os
 from contextlib import contextmanager
 
@@ -190,22 +191,33 @@ def insert_waste_event(
     hazard_reason=None,
     visible_text=None,
     reusable_condition=None,
+    image_embedding=None,
 ) -> int:
     """created_at, when given, is the actual capture/disposal time (e.g. from an
     edge device queued during a network outage) rather than persist time; it is
     passed straight through as a bind value, so SYSTIMESTAMP is only used when
-    the caller has no capture-time timestamp to report."""
+    the caller has no capture-time timestamp to report.
+
+    image_embedding is the item photo's Cohere Embed v4 embedding, stored so the
+    event joins the organization's searchable visual history (find_similar_events,
+    cluster_unknown_events). It is optional: the embedding call is best-effort and
+    returns None on failure (image_embed.embed_image), and a missing embedding
+    must never cost the disposal event itself, so None stores NULL and the row
+    persists unchanged."""
     created_at_sql = ":created_at" if created_at is not None else "SYSTIMESTAMP"
+    embedding_sql = (
+        "TO_VECTOR(:image_embedding_str, 1536, FLOAT32)" if image_embedding is not None else "NULL"
+    )
     with get_connection() as conn, conn.cursor() as cursor:
         event_id_var = cursor.var(int)
         cursor.execute(
             f"""
             INSERT INTO waste_events
                 (product_id, detected_object, material, category, location, confidence, image_key, created_at,
-                 hazard_flag, hazard_reason, visible_text, reusable_condition)
+                 hazard_flag, hazard_reason, visible_text, reusable_condition, image_embedding)
             VALUES
                 (:product_id, :detected_object, :material, :category, :location, :confidence, :image_key, {created_at_sql},
-                 :hazard_flag, :hazard_reason, :visible_text, :reusable_condition)
+                 :hazard_flag, :hazard_reason, :visible_text, :reusable_condition, {embedding_sql})
             RETURNING event_id INTO :event_id
             """,
             product_id=product_id,
@@ -221,9 +233,268 @@ def insert_waste_event(
             visible_text=visible_text,
             reusable_condition=reusable_condition,
             **({"created_at": created_at} if created_at is not None else {}),
+            **(
+                {"image_embedding_str": _vector_literal(image_embedding)}
+                if image_embedding is not None
+                else {}
+            ),
         )
         conn.commit()
         return event_id_var.getvalue()[0]
+
+
+# ---------------------------------------------------------------------------
+# Visual memory (WASTE_EVENTS.IMAGE_EMBEDDING)
+# ---------------------------------------------------------------------------
+#
+# Every advanced-analysis event stores the item photo's Cohere Embed v4
+# embedding alongside the row (see insert_waste_event). That turns the same
+# Oracle AI Database vector search the catalog already uses for a single
+# lookup (match_product_by_image) into a search over the organization's own
+# disposal history: the visually closest past disposals of any event
+# (find_similar_events), and groups of repeatedly-discarded items that
+# matched no catalog product at all (cluster_unknown_events).
+
+# Cosine-distance ceiling for calling two unmatched item photos "the same
+# item". Like match_product_by_image's max_distance this is a heuristic, not
+# an empirically tuned value -- it has not been exercised against a real body
+# of disposal photos, so expect to tune it once there is one.
+UNKNOWN_CLUSTER_MAX_DISTANCE = 0.25
+
+# Groups smaller than this are dropped from cluster_unknown_events' output:
+# the point of the view is what an organization throws away *repeatedly* but
+# has never catalogued, and a single sighting is not yet that.
+UNKNOWN_CLUSTER_MIN_SIZE = 2
+
+
+def find_similar_events(event_id: int, limit: int = 6) -> list[dict]:
+    """The visually closest past disposals to `event_id`, nearest first.
+
+    Cosine distance over the stored image embeddings via Oracle's native
+    VECTOR_DISTANCE, same operator and metric match_product_by_image uses for
+    catalog lookups -- the subject event's embedding is read from its own row
+    by self-join rather than passed in, so no re-embedding is needed. The
+    `distance` is returned with each row because the UI shows it.
+
+    Unlike match_product_by_image there is no distance ceiling here: this is a
+    nearest-neighbour browse, so the caller sees the closest matches and how
+    close they actually are rather than an empty result. Events with no stored
+    embedding (captured before this column existed, or whose embedding call
+    failed) cannot participate and are excluded on both sides; if the subject
+    event is one of them the result is empty.
+
+    Raises LookupError when `event_id` does not exist, which the API layer
+    turns into a 404.
+    """
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            "SELECT 1 FROM waste_events WHERE event_id = :event_id",
+            event_id=event_id,
+        )
+        if cursor.fetchone() is None:
+            raise LookupError(f"No event with event_id {event_id}")
+
+        cursor.execute(
+            """
+            SELECT other.event_id, other.detected_object, other.material, other.category,
+                   other.location, other.image_key, other.created_at,
+                   VECTOR_DISTANCE(other.image_embedding, subject.image_embedding, COSINE) AS distance
+            FROM waste_events other, waste_events subject
+            WHERE subject.event_id = :event_id
+              AND subject.image_embedding IS NOT NULL
+              AND other.image_embedding IS NOT NULL
+              AND other.event_id <> :event_id
+            ORDER BY distance
+            FETCH FIRST :limit ROWS ONLY
+            """,
+            event_id=event_id,
+            limit=limit,
+        )
+        cols = [d[0].lower() for d in cursor.description]
+        rows = [dict(zip(cols, row)) for row in cursor.fetchall()]
+        for row in rows:
+            row["distance"] = float(row["distance"])
+            if row["created_at"]:
+                row["created_at"] = row["created_at"].strftime("%Y-%m-%d %H:%M:%S")
+        return rows
+
+
+def _cosine_distance(left, right) -> float:
+    """Cosine distance between two embeddings, defined exactly as Oracle's
+    VECTOR_DISTANCE(..., COSINE): 1 - cosine similarity, so 0 is identical.
+
+    Computed in Python rather than SQL because the greedy grouping below
+    needs every pairwise distance within one candidate set, and plain
+    arithmetic over 1536 floats avoids both a query per pair and a numeric
+    dependency. A zero-magnitude vector has no direction to compare, so it is
+    reported as maximally distant (1.0) rather than dividing by zero.
+    """
+    dot = sum(a * b for a, b in zip(left, right))
+    left_norm = math.sqrt(sum(a * a for a in left))
+    right_norm = math.sqrt(sum(b * b for b in right))
+    if left_norm == 0.0 or right_norm == 0.0:
+        return 1.0
+    return 1.0 - dot / (left_norm * right_norm)
+
+
+def _group_by_similarity(events: list[dict], max_distance: float) -> list[list[dict]]:
+    """Greedy single-pass visual grouping of `events` (each a dict carrying an
+    `embedding`), largest group first.
+
+    Walks the list in order; the first unassigned event seeds a group and
+    pulls in every later unassigned event within `max_distance` of that seed.
+    Every event therefore lands in exactly one group, and the seed -- the
+    event the others were actually measured against -- is each group's first
+    member and its representative.
+
+    Deliberately not k-means/DBSCAN/hierarchical: there is no cluster count to
+    choose, the result is stable and explainable ("these are all within
+    `max_distance` of that photo"), and it needs no clustering dependency.
+    The cost is order-sensitivity at the margins -- an event near two seeds
+    joins whichever seeded first -- which is acceptable for surfacing
+    repeatedly-discarded items.
+    """
+    groups: list[list[dict]] = []
+    assigned: set[int] = set()
+    for index, seed in enumerate(events):
+        if index in assigned:
+            continue
+        assigned.add(index)
+        members = [seed]
+        for other_index in range(index + 1, len(events)):
+            if other_index in assigned:
+                continue
+            if _cosine_distance(seed["embedding"], events[other_index]["embedding"]) <= max_distance:
+                assigned.add(other_index)
+                members.append(events[other_index])
+        groups.append(members)
+    # Stable sort, so groups of equal size keep the order their seeds appeared in.
+    groups.sort(key=len, reverse=True)
+    return groups
+
+
+def cluster_unknown_events(
+    days: int = 30,
+    max_distance: float = UNKNOWN_CLUSTER_MAX_DISTANCE,
+    min_size: int = UNKNOWN_CLUSTER_MIN_SIZE,
+) -> dict:
+    """Unknown-item discovery: events in the window that matched no catalog
+    product (PRODUCT_ID IS NULL) but do carry an image embedding, grouped by
+    visual similarity, most-repeated group first.
+
+    This is the blind-spot report -- what the organization keeps throwing away
+    that nobody has catalogued -- so the caller can offer to teach it as a
+    catalog product. `unmatched_events` reports how many events were
+    considered, so a caller showing no groups can say whether that is because
+    there were no unmatched events or because none repeated.
+
+    Each group reports `representative_event_id` (the member every other
+    member's distance was measured against) rather than a nested copy of that
+    member, so a member appears exactly once in the payload.
+    """
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT event_id, detected_object, material, category, location, image_key,
+                   created_at, image_embedding
+            FROM waste_events
+            WHERE product_id IS NULL
+              AND image_embedding IS NOT NULL
+              AND created_at >= SYSTIMESTAMP - :days
+            ORDER BY created_at DESC
+            """,
+            days=days,
+        )
+        candidates = [
+            {
+                "event_id": row[0],
+                "detected_object": row[1],
+                "material": row[2],
+                "category": row[3],
+                "location": row[4],
+                "image_key": row[5],
+                "created_at": row[6],
+                "embedding": row[7],
+            }
+            for row in cursor.fetchall()
+        ]
+
+    clusters = []
+    for members in _group_by_similarity(candidates, max_distance):
+        if len(members) < min_size:
+            continue
+        timestamps = [m["created_at"] for m in members if m["created_at"]]
+        clusters.append(
+            {
+                "size": len(members),
+                "representative_event_id": members[0]["event_id"],
+                "first_seen": min(timestamps).strftime("%Y-%m-%d %H:%M:%S") if timestamps else None,
+                "last_seen": max(timestamps).strftime("%Y-%m-%d %H:%M:%S") if timestamps else None,
+                "members": [
+                    {
+                        "event_id": m["event_id"],
+                        "detected_object": m["detected_object"],
+                        "material": m["material"],
+                        "category": m["category"],
+                        "location": m["location"],
+                        "image_key": m["image_key"],
+                        "created_at": (
+                            m["created_at"].strftime("%Y-%m-%d %H:%M:%S") if m["created_at"] else None
+                        ),
+                    }
+                    for m in members
+                ],
+            }
+        )
+
+    return {
+        "window_days": days,
+        "max_distance": max_distance,
+        "unmatched_events": len(candidates),
+        "clusters": clusters,
+    }
+
+
+def list_events_missing_embedding(limit: int | None = None) -> list[dict]:
+    """Events that have a stored image but no image embedding yet -- the work
+    queue for backfill_event_embeddings.py.
+
+    Rows are returned oldest-first so a run interrupted partway through makes
+    predictable progress, and because the update it performs removes a row
+    from this result, the script is re-runnable without repeating work.
+    """
+    with get_connection() as conn, conn.cursor() as cursor:
+        row_limit = "FETCH FIRST :limit ROWS ONLY" if limit is not None else ""
+        cursor.execute(
+            f"""
+            SELECT event_id, image_key
+            FROM waste_events
+            WHERE image_key IS NOT NULL AND image_embedding IS NULL
+            ORDER BY created_at
+            {row_limit}
+            """,
+            **({"limit": limit} if limit is not None else {}),
+        )
+        return [{"event_id": row[0], "image_key": row[1]} for row in cursor.fetchall()]
+
+
+def set_event_embedding(event_id: int, embedding: list[float]) -> None:
+    """Stores an image embedding on an existing event, using the same
+    TO_VECTOR() binding insert_waste_event and set_product_reference_embedding
+    use. Raises LookupError when `event_id` does not exist."""
+    with get_connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE waste_events
+            SET image_embedding = TO_VECTOR(:embedding_str, 1536, FLOAT32)
+            WHERE event_id = :event_id
+            """,
+            embedding_str=_vector_literal(embedding),
+            event_id=event_id,
+        )
+        if cursor.rowcount == 0:
+            raise LookupError(f"No event with event_id {event_id}")
+        conn.commit()
 
 
 def list_recent_events(limit: int = 20) -> list[dict]:

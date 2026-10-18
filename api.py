@@ -164,11 +164,17 @@ def _persist_advanced_result(
     location: str | None,
     captured_at: datetime | None = None,
 ) -> tuple[int, dict | None]:
+    # The item photo's embedding is computed on this path unconditionally --
+    # it is stored on the event (visual memory), so it is worth having even
+    # when no catalog product has a reference image to match against. This is
+    # the asynchronous advanced-analysis path only; /sort's fast path never
+    # calls it, so physical sorting gains no dependency on an embedding call.
+    # embed_image never raises and returns None on failure, in which case the
+    # event still persists with a NULL embedding.
+    embedding = image_embed.embed_image(image)
     matched_product = None
-    if db.has_any_reference_embedding():
-        embedding = image_embed.embed_image(image)
-        if embedding is not None:
-            matched_product = db.match_product_by_image(embedding)
+    if embedding is not None and db.has_any_reference_embedding():
+        matched_product = db.match_product_by_image(embedding)
     if matched_product is None:
         # Fall back to text-overlap matching -- the common case until an
         # admin uploads a reference image for a catalog product, or when
@@ -189,6 +195,7 @@ def _persist_advanced_result(
         hazard_reason=identification.get("hazard_reason"),
         visible_text=identification.get("visible_text"),
         reusable_condition=identification.get("reusable_condition"),
+        image_embedding=embedding,
     )
     return event_id, matched_product
 
@@ -400,6 +407,35 @@ def _attach_image_urls(rows: list[dict]) -> list[dict]:
 @app.get("/events/recent")
 def get_events_recent(limit: int = 20):
     return _attach_image_urls(db.list_recent_events(limit=limit))
+
+
+# ---------------------------------------------------------------------------
+# Visual memory -- vector search over stored event image embeddings
+# ---------------------------------------------------------------------------
+
+@app.get("/events/{event_id}/similar")
+def get_similar_events(event_id: int, limit: int = 6):
+    """The visually closest past disposals to one event, nearest first.
+
+    Each row carries its cosine `distance` from the subject event, so the
+    caller can show how close a match actually is rather than implying every
+    neighbour is the same item.
+    """
+    try:
+        similar = db.find_similar_events(event_id, limit=limit)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return _attach_image_urls(similar)
+
+
+@app.get("/events/unknown-clusters")
+def get_unknown_clusters(days: int = 30):
+    """Unknown-item discovery: groups of visually near-identical disposals in
+    the window that matched no catalog product."""
+    result = db.cluster_unknown_events(days=days)
+    for cluster in result["clusters"]:
+        _attach_image_urls(cluster["members"])
+    return result
 
 
 # ---------------------------------------------------------------------------

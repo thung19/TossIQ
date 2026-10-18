@@ -77,6 +77,28 @@ def upload_image(image_bytes: bytes, key: str) -> str | None:
         return None
 
 
+def download_image(key: str) -> bytes | None:
+    """Fetches the stored object's bytes, or None if not configured, the object
+    is missing, or the fetch failed -- never raises.
+
+    Used by backfill_event_embeddings.py, which re-reads already-stored event
+    photos to embed them. A None means "cannot be embedded now", which that
+    script reports and skips rather than treating as fatal, same
+    degraded-by-default posture as the uploads above.
+    """
+    config = _load_config()
+    if config is None:
+        return None
+
+    try:
+        client = _client(config)
+        response = client.get_object(Bucket=config["OCI_OS_BUCKET"], Key=key)
+        return response["Body"].read()
+    except Exception:
+        logger.exception("OCI Object Storage download failed for key %s", key)
+        return None
+
+
 def get_presigned_url(key: str, expires_in: int = 300) -> str | None:
     """Returns a presigned GET URL for `key`, or None if not configured or
     generation failed -- never raises.
