@@ -12,8 +12,10 @@ Two sorting entry points, matching the PRD's two-layer architecture:
 Everything else (catalog, dashboard stats, recommendations) is plain CRUD/
 aggregation over the OCI-backed tables in db.py (Layer 3).
 
-GET / serves the dashboard (static/index.html) -- a live view over the
-same stats/recommendations/products endpoints below.
+GET / serves the dashboard -- the built React app in frontend/dist, a live
+view over the same stats/recommendations/products endpoints below. Serving it
+requires `npm install && npm run build` in frontend/; without that build the
+API still starts and serves every route below.
 
 The models are loaded once at startup (see `lifespan`) and reused across
 requests via `app.state`.
@@ -29,6 +31,8 @@ Run locally:
 import io
 import logging
 import uuid
+
+from pathlib import Path
 
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -437,4 +441,13 @@ def generate_recommendations(days: int = 30):
 # Dashboard UI -- mounted last so it never shadows the API routes above
 # ---------------------------------------------------------------------------
 
-app.mount("/", StaticFiles(directory="static", html=True), name="dashboard")
+FRONTEND_DIST = Path(__file__).resolve().parent / "frontend" / "dist"
+
+if FRONTEND_DIST.is_dir():
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="dashboard")
+else:
+    logger.warning(
+        "Dashboard build not found at %s; API routes only. "
+        "Build it with: cd frontend && npm install && npm run build",
+        FRONTEND_DIST,
+    )

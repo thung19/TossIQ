@@ -36,9 +36,15 @@ remaining stages (better suited to ASKU's chat interface and procurement
 upload's multi-step flow). Stage 2.5 migrates the existing vanilla-JS
 dashboard/sidebar/hazard-workflow work into React as a foundation; stages
 3+ are built as React from there. FastAPI continues serving the built
-static output (`npm run build`'s output directory) via the same
-`StaticFiles` mount -- the backend's role doesn't change, only how the
-frontend is authored and built.
+static output (`frontend/dist`) via the same `StaticFiles` mount -- the
+backend's role doesn't change, only how the frontend is authored and built.
+
+The build step is a prerequisite for serving the dashboard:
+
+    cd frontend && npm install && npm run build   # then run the API as before
+
+For frontend development, `npm run dev` serves the app with hot reload and
+proxies API requests to a FastAPI server on `http://localhost:8000`.
 
 ## Stages
 
@@ -63,6 +69,7 @@ frontend is authored and built.
    data; no fabricated device fleet.
 
 ## Status
-Stages 1 (sidebar navigation) and 2 (hazard review workflow) are merged.
-Stage 2's live workflow (trigger a hazard flag, acknowledge it, resolve it)
-awaits captain verification against real OCI credentials. Stage 3 is next.
+Stages 1 (sidebar navigation), 2 (hazard review workflow), and 2.5 (React
+migration) are merged. Stage 2's live workflow (trigger a hazard flag,
+acknowledge it, resolve it) and stage 2.5's migrated dashboard await captain
+verification against real OCI credentials. Stage 3 is next.
