@@ -5,7 +5,7 @@ import EventThumb from '../components/EventThumb.jsx';
 const HAZARD_NEXT_STATUS = { open: 'acknowledged', acknowledged: 'resolved' };
 const HAZARD_STATUS_LABEL = { open: 'Open', acknowledged: 'Acknowledged', resolved: 'Resolved' };
 
-export default function HazardDetectionView({ hazards, onStatusChanged }) {
+export default function HazardDetectionView({ hidden, hazards, onStatusChanged }) {
   const [pendingId, setPendingId] = useState(null);
 
   async function advance(eventId, nextStatus) {
@@ -21,7 +21,7 @@ export default function HazardDetectionView({ hazards, onStatusChanged }) {
   }
 
   return (
-    <div className="view">
+    <div className="view" hidden={hidden}>
       <div className="topbar">
         <div>
           <h1>Hazard Detection</h1>

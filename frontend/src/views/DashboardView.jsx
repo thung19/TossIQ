@@ -7,11 +7,11 @@ import RecentEvents from '../components/RecentEvents.jsx';
 import TopItemsChart from '../components/TopItemsChart.jsx';
 import TrendChart from '../components/TrendChart.jsx';
 
-export default function DashboardView({ days, onDaysChange, data }) {
+export default function DashboardView({ hidden, days, onDaysChange, data }) {
   const { overview, items, locations, products, recommendations, events } = data;
 
   return (
-    <div className="view">
+    <div className="view" hidden={hidden}>
       <div className="topbar">
         <div>
           <h1>TossIQ</h1>

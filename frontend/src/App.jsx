@@ -40,13 +40,20 @@ export default function App() {
         <Sidebar activeView={activeView} onNavigate={navigate} open={sidebarOpen} />
 
         <main className="main-content">
-          {activeView === 'dashboard' && (
-            <DashboardView days={days} onDaysChange={setDays} data={data} />
-          )}
-          {activeView === 'hazard-detection' && (
-            <HazardDetectionView hazards={data.hazards} onStatusChanged={data.refreshHazards} />
-          )}
-          {PLACEHOLDER_TEXT[activeView] && <PlaceholderView text={PLACEHOLDER_TEXT[activeView]} />}
+          <DashboardView
+            hidden={activeView !== 'dashboard'}
+            days={days}
+            onDaysChange={setDays}
+            data={data}
+          />
+          <HazardDetectionView
+            hidden={activeView !== 'hazard-detection'}
+            hazards={data.hazards}
+            onStatusChanged={data.refreshHazards}
+          />
+          {Object.entries(PLACEHOLDER_TEXT).map(([viewId, text]) => (
+            <PlaceholderView key={viewId} hidden={activeView !== viewId} text={text} />
+          ))}
         </main>
       </div>
     </TooltipProvider>

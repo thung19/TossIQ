@@ -13,8 +13,9 @@ Everything else (catalog, dashboard stats, recommendations) is plain CRUD/
 aggregation over the OCI-backed tables in db.py (Layer 3).
 
 GET / serves the dashboard -- the built React app in frontend/dist, a live
-view over the same stats/recommendations/products endpoints below. Build it
-with `npm install && npm run build` in frontend/ before starting the API.
+view over the same stats/recommendations/products endpoints below. Serving it
+requires `npm install && npm run build` in frontend/; without that build the
+API still starts and serves every route below.
 
 The models are loaded once at startup (see `lifespan`) and reused across
 requests via `app.state`.
