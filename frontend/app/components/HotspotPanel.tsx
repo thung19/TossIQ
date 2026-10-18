@@ -57,7 +57,7 @@ export default function HotspotPanel({
                   <button className="code" onClick={() => onSelectCan?.(can.can_code)}>
                     {can.can_code}
                   </button>
-                  <span className="where">{can.building_name ?? "—"}</span>
+                  <span className="where">{can.building_name ?? "-"}</span>
                   <span className="total">{can.shown_items.toLocaleString()}</span>
                 </header>
                 <ul>

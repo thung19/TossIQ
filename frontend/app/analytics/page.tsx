@@ -127,7 +127,7 @@ export default function AnalyticsPage() {
   // The KPI strip sits above every tab, so its data is fetched on any filter
   // change rather than with a particular tab. Accuracy is in here rather than
   // with the Quality tab for the same reason: it has a tile in the strip, and
-  // a headline tile that reads "—" until you happen to open another tab looks
+  // a headline tile that reads "-" until you happen to open another tab looks
   // broken rather than deferred.
   useEffect(() => {
     let alive = true;
@@ -256,20 +256,20 @@ export default function AnalyticsPage() {
         />
 
         <section className="kpis">
-          <StatCard label="items" value={overview?.total_items.toLocaleString() ?? "—"} />
+          <StatCard label="items" value={overview?.total_items.toLocaleString() ?? "-"} />
           <StatCard
             label="est. cost"
-            value={overview ? formatMeasure(overview.estimated_cost, "cost") : "—"}
+            value={overview ? formatMeasure(overview.estimated_cost, "cost") : "-"}
           />
           <StatCard
             label="est. mass"
-            value={overview ? formatMeasure(overview.estimated_kg, "mass") : "—"}
+            value={overview ? formatMeasure(overview.estimated_kg, "mass") : "-"}
           />
-          <StatCard label="diverted" value={overview?.diversion_rate ?? "—"} suffix="%" />
-          <StatCard label="catalog match" value={overview?.catalog_match_rate ?? "—"} suffix="%" />
+          <StatCard label="diverted" value={overview?.diversion_rate ?? "-"} suffix="%" />
+          <StatCard label="catalog match" value={overview?.catalog_match_rate ?? "-"} suffix="%" />
           <StatCard
             label="hazardous"
-            value={overview?.hazard_items ?? "—"}
+            value={overview?.hazard_items ?? "-"}
             delta={
               overview
                 ? overview.hazard_critical_items > 0
@@ -280,7 +280,7 @@ export default function AnalyticsPage() {
           />
           <StatCard
             label="review agreement"
-            value={accuracy?.accuracy ?? "—"}
+            value={accuracy?.accuracy ?? "-"}
             suffix={accuracy?.accuracy != null ? "%" : undefined}
             delta={accuracy ? `${accuracy.reviewed_events} reviewed` : undefined}
           />

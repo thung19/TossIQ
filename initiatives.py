@@ -61,6 +61,11 @@ def _measure_landfill_items(filters: dict) -> float:
     return float(_totals({**filters, "category": "landfill"})["n"])
 
 
+def _measure_landfill_mass(filters: dict) -> float:
+    row = _totals({**filters, "category": "landfill"})
+    return round((row["matched_grams"] + row["class_grams"]) / 1000.0, 2)
+
+
 def _measure_contamination(filters: dict) -> float:
     return analytics.misrouted(**filters)["misrouted_rate"]
 
@@ -100,17 +105,37 @@ METRICS = {
         "label": "Items discarded",
         "unit": "items",
         "format": "count",
+        # Counting undifferentiated rubbish is not a measurement of
+        # anything: 233 items to landfill treats a crisp packet and a
+        # glass bottle alike, and the number moves when the mix changes
+        # rather than when the waste does. A count only means something
+        # scoped to one product, where every unit is the same thing.
+        "counts_mixed_items": True,
         "lower_is_better": True,
         "measure": _measure_items,
-        "help": "Every disposal logged in scope. The broadest reduction goal.",
+        "help": "Every disposal logged in scope. Only meaningful when scoped to a "
+                "specific item, like bottled water: counting mixed rubbish treats a "
+                "crisp packet and a glass bottle alike. Use mass otherwise.",
+    },
+    "landfill_mass": {
+        "label": "Mass sent to landfill",
+        "unit": "kg",
+        "format": "mass",
+        "lower_is_better": True,
+        "measure": _measure_landfill_mass,
+        "help": "Estimated weight of what goes in a landfill bin. The right measure "
+                "for a general waste goal: a count treats a crisp packet and a glass "
+                "bottle alike.",
     },
     "landfill_items": {
         "label": "Items sent to landfill",
         "unit": "items",
         "format": "count",
+        "counts_mixed_items": True,
         "lower_is_better": True,
         "measure": _measure_landfill_items,
-        "help": "Disposals put in a landfill bin, whatever the goal's own scope says.",
+        "help": "Disposals put in a landfill bin, whatever the goal's own scope says. "
+                "Only meaningful scoped to one product; use mass for general waste.",
     },
     "cost": {
         "label": "Estimated cost discarded",
@@ -325,6 +350,29 @@ def materiality(metric: str, baseline: float | None) -> dict:
     }
 
 
+def measurement_warning(initiative: dict) -> str | None:
+    """Flags a goal whose chosen measure cannot mean what it says.
+
+    The one case that matters: a COUNT over a slice holding more than one
+    kind of thing. "Cut items to landfill from 233 to 75" sounds precise
+    and is not, because the number moves when the mix of rubbish changes
+    rather than when the amount of it does, and nobody can tell whether 75
+    crisp packets is better or worse than 60 bottles. Scoped to a single
+    product, a count is exactly right: every unit is the same object.
+    """
+    spec = METRICS.get(initiative.get("metric"), {})
+    if not spec.get("counts_mixed_items"):
+        return None
+    # A scope naming one product makes every counted unit the same thing.
+    if initiative.get("scope_object") or initiative.get("scope_supplier"):
+        return None
+    return (
+        "This counts items without saying what they are, so it treats a crisp "
+        "packet and a glass bottle alike and moves when the mix changes rather "
+        "than the amount. Either scope it to one product, or measure mass."
+    )
+
+
 def days_remaining(target_date: str | None, now: datetime | None = None) -> int | None:
     if not target_date:
         return None
@@ -487,12 +535,14 @@ def resolve(initiative: dict, projects: list[dict], building_names: dict[int, st
 
     size = materiality(initiative.get("metric"), initiative.get("baseline_value"))
     clock = pace(initiative, advance["percent"], now=now)
+    measure_warning = measurement_warning(initiative)
 
     return {
         **initiative,
         **clock,
         "is_material": size["is_material"],
         "materiality_note": size["note"],
+        "measurement_warning": measure_warning,
         "metric_label": spec.get("label", initiative.get("metric")),
         "unit": spec.get("unit", ""),
         "format": spec.get("format", "count"),
@@ -585,6 +635,12 @@ def list_resolved(status: str | None = None, now: datetime | None = None) -> dic
             for item in immaterial
         ],
         "materiality_floor": {k: v for k, v in MATERIALITY_FLOOR.items() if v},
+        "badly_measured": [
+            {"initiative_id": item["initiative_id"], "name": item["name"],
+             "note": item["measurement_warning"]}
+            for item in resolved
+            if item["status"] == "active" and item["measurement_warning"]
+        ],
         "metrics": {
             key: {k: v for k, v in spec.items() if k != "measure"}
             for key, spec in METRICS.items()

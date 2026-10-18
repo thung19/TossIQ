@@ -83,7 +83,7 @@ export default function UsageHeatmap({
 
       <div className="readout">
         {activity === null ? (
-          <span className="dim">{error ? `usage data unavailable (${error}) — retrying` : "loading…"}</span>
+          <span className="dim">{error ? `usage data unavailable (${error}), retrying` : "loading…"}</span>
         ) : activity.total_events === 0 ? (
           <span className="dim">no disposals logged in this window</span>
         ) : (
@@ -91,7 +91,7 @@ export default function UsageHeatmap({
             <span>
               busiest hour{" "}
               <b>
-                {activity.typical_peak ? hourLabel(activity.typical_peak.hour_of_day) : "—"}
+                {activity.typical_peak ? hourLabel(activity.typical_peak.hour_of_day) : "-"}
               </b>
               {activity.typical_peak != null && (
                 <span className="dim"> ({activity.typical_peak.count}/h median)</span>
@@ -125,7 +125,7 @@ export default function UsageHeatmap({
             key={hour}
             className={`axis hour ${bucket.day == null && bucket.hour === hour ? "on" : ""}`}
             onClick={() => toggleHour(hour)}
-            title={`${hourLabel(hour)} across every day — ${hourTotals[hour]} items`}
+            title={`${hourLabel(hour)} across every day, ${hourTotals[hour]} items`}
           >
             {hour % 3 === 0 ? hourLabel(hour) : ""}
           </button>
@@ -137,7 +137,7 @@ export default function UsageHeatmap({
             <button
               className={`axis day ${bucket.day === day && bucket.hour == null ? "on" : ""}`}
               onClick={() => toggleDay(day)}
-              title={`${dayNames[day]} — ${dayTotals[day]} items`}
+              title={`${dayNames[day]}, ${dayTotals[day]} items`}
             >
               {dayNames[day]}
             </button>
@@ -150,7 +150,7 @@ export default function UsageHeatmap({
                   className={`cell ${active ? "on" : ""} ${over ? "over" : ""} ${count === 0 ? "zero" : ""}`}
                   style={{ background: heatColor(count, scaleMax) }}
                   onClick={() => toggleCell(day, hour)}
-                  title={`${dayNames[day]} ${hourLabel(hour)} — ${count} item${count === 1 ? "" : "s"}${
+                  title={`${dayNames[day]} ${hourLabel(hour)}, ${count} item${count === 1 ? "" : "s"}${
                     over ? " (over the colour scale)" : ""
                   }`}
                   aria-label={`${dayNames[day]} ${hourLabel(hour)}, ${count} items`}
@@ -173,7 +173,7 @@ export default function UsageHeatmap({
         <span className="spacer" />
         {selected ? (
           <button className="chip clear" onClick={() => onBucketChange({ day: null, hour: null })}>
-            showing {bucketLabel(bucket.day, bucket.hour, dayNames)} — clear
+            showing {bucketLabel(bucket.day, bucket.hour, dayNames)}, clear
           </button>
         ) : (
           <span className="dim hint">{selectionHint}</span>

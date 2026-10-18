@@ -114,7 +114,7 @@ export default function CanDetailPanel({
             </div>
             <div className="chips">
               <CodeChip>{can.model_code}</CodeChip>
-              <CodeChip>fw {can.firmware_version ?? "—"}</CodeChip>
+              <CodeChip>fw {can.firmware_version ?? "-"}</CodeChip>
               <CodeChip>{can.stream_count ?? "?"}-stream</CodeChip>
               {can.is_simulated ? <CodeChip>simulated</CodeChip> : <CodeChip>live unit</CodeChip>}
             </div>
@@ -150,12 +150,12 @@ export default function CanDetailPanel({
           )}
 
           <section className="kpis">
-            <StatCard label="capacity" value={can.capacity_liters ?? "—"} suffix="L" />
+            <StatCard label="capacity" value={can.capacity_liters ?? "-"} suffix="L" />
             <StatCard label="items cap" value={can.capacity_items} />
-            <StatCard label="battery" value={can.battery_percent ?? "—"} suffix="%" />
+            <StatCard label="battery" value={can.battery_percent ?? "-"} suffix="%" />
             <StatCard label="camera" value={can.camera_ok === 0 ? "down" : "ok"} />
             <StatCard label="actuator" value={can.has_actuator === 0 ? "none" : can.actuator_ok === 0 ? "down" : "ok"} />
-            <StatCard label="in can" value={contents?.total_items ?? "—"} />
+            <StatCard label="in can" value={contents?.total_items ?? "-"} />
           </section>
 
           <section className="block">
@@ -227,8 +227,8 @@ export default function CanDetailPanel({
               {can.service_events.map((event) => (
                 <div key={event.service_id} className="history-row">
                   <span className="type">{event.service_type}</span>
-                  <span className="when">{event.performed_at ?? "—"}</span>
-                  <span className="who">{event.performed_by ?? "—"}</span>
+                  <span className="when">{event.performed_at ?? "-"}</span>
+                  <span className="who">{event.performed_by ?? "-"}</span>
                 </div>
               ))}
             </div>

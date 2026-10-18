@@ -120,7 +120,7 @@ export default function DistributionPanel({
               `${data.shown_count.toLocaleString()} of ${data.total_count.toLocaleString()} items` +
               (data.truncated ? " · tail not shown" : "")
             : error
-              ? "unavailable — retrying"
+              ? "unavailable, retrying"
               : "loading…"}
         </span>
       </header>

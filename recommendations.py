@@ -323,7 +323,7 @@ def _infrastructure_switch(product, replacement, count, annual_units, carbon, da
             metric("Avoided production carbon",
                    impact.describe_co2e(carbon["production_saved_kg"]),
                    "bottles never manufactured"),
-            metric("Payback", f"{payback_months:.1f} months" if payback_months else "—",
+            metric("Payback", f"{payback_months:.1f} months" if payback_months else "-",
                    f"{_plural(stations, 'station')} at {_money(REFILL_STATION_COST)}"),
             table(
                 "Why a station rather than handing out flasks",
@@ -345,7 +345,7 @@ def _infrastructure_switch(product, replacement, count, annual_units, carbon, da
                     ["Goes in the", (product.get("disposal_category") or "unknown") + " bin"],
                     ["Estimated mass discarded",
                      _mass((product.get("unit_weight_grams") or 0) * count)],
-                    ["Supplier", product.get("supplier") or "—"],
+                    ["Supplier", product.get("supplier") or "-"],
                 ],
                 impact.DISCLAIMER,
             ),
@@ -403,13 +403,13 @@ def _reuse_switch(product, replacement, count, annual_units, carbon, days) -> di
                    "difference in cost per use, times annual units"),
             metric("Net carbon", impact.describe_co2e(carbon["net_co2e_kg"]),
                    "production avoided, less the reusable's own footprint"),
-            metric("Payback", f"{payback_months:.1f} months" if payback_months else "—",
+            metric("Payback", f"{payback_months:.1f} months" if payback_months else "-",
                    f"{_plural(fleet_size, 'unit')} at {_money(replacement['unit_cost'] or 0)}"),
             table(
                 "Cost per use",
                 ["", "unit price", "uses per unit", "washing", "cost per use"],
                 [
-                    [product["product_name"], _money(disposable_per_use), "1", "—",
+                    [product["product_name"], _money(disposable_per_use), "1", "-",
                      _money(disposable_per_use)],
                     [replacement["product_name"], _money(replacement["unit_cost"] or 0),
                      f"{uses:,}", _money(WASH_COST_PER_USE), _money(reusable_per_use)],
@@ -481,7 +481,7 @@ def _material_switch(product, replacement, count, annual_units, carbon, days) ->
             metric("Annual cost change",
                    ("+" if dearer else "−") + _money(abs(annual_cost_delta)),
                    "more expensive" if dearer else "cheaper"),
-            metric("Landfill avoided", f"{landfill:.0f} kg/yr" if landfill > 0 else "—",
+            metric("Landfill avoided", f"{landfill:.0f} kg/yr" if landfill > 0 else "-",
                    "mass moved out of the landfill stream"),
             metric("Net carbon", impact.describe_co2e(net_co2e), "production and disposal"),
             table(
@@ -490,12 +490,12 @@ def _material_switch(product, replacement, count, annual_units, carbon, days) ->
                 [
                     [product["product_name"], _money(product["unit_cost"] or 0),
                      _mass(product.get("unit_weight_grams") or 0),
-                     product.get("disposal_category") or "—",
-                     product.get("material_subtype") or product.get("material") or "—"],
+                     product.get("disposal_category") or "-",
+                     product.get("material_subtype") or product.get("material") or "-"],
                     [replacement["product_name"], _money(replacement["unit_cost"] or 0),
                      _mass(replacement.get("unit_weight_grams") or 0),
-                     replacement.get("disposal_category") or "—",
-                     replacement.get("material_subtype") or replacement.get("material") or "—"],
+                     replacement.get("disposal_category") or "-",
+                     replacement.get("material_subtype") or replacement.get("material") or "-"],
                 ],
                 "A heavier replacement can be worse on carbon even when it goes "
                 "in a better bin, which is why both columns are here.",
@@ -696,7 +696,7 @@ def retime_collections(context: dict) -> list[dict]:
                        f"across {len(buildings)} building(s)"),
                 metric("Suggested pickup", _hour(slot), "just after the rush ends"),
                 metric("Share of volume before pickup",
-                       f"{in_window / total * 100:.0f}%" if total else "—",
+                       f"{in_window / total * 100:.0f}%" if total else "-",
                        f"{in_window:,} of {total:,} disposals"),
                 table(
                     "Cans this would cover",

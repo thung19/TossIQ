@@ -100,7 +100,7 @@ export default function QualityPanel({
                   <tr key={row.label}>
                     <td>{row.label}</td>
                     <td className="n">{row.reviewed}</td>
-                    <td className="n">{row.accuracy == null ? "—" : `${row.accuracy}%`}</td>
+                    <td className="n">{row.accuracy == null ? "-" : `${row.accuracy}%`}</td>
                     <td className="track">
                       {row.accuracy != null && (
                         <span className="bar" style={{ width: `${row.accuracy}%` }} />

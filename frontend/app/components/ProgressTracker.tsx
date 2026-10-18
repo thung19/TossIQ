@@ -188,10 +188,10 @@ function buildStages(d: Detection | null, cam: CameraStats | null): Stage[] {
   const routed = !!d && !!d.category;
   const logged = routed && (d?.confidence || 0) >= 0.55;
   return [
-    { key: "capture", label: "capture", value: captured ? `${(cam?.frames ?? 0).toLocaleString()} fr` : "—", done: captured },
-    { key: "classify", label: "classify", value: d?.label || "—", done: classified },
-    { key: "route", label: "route", value: d?.category || "—", done: routed },
-    { key: "log", label: "log", value: logged ? "ok" : classified ? "<thr" : "—", done: logged },
-    { key: "latency", label: "latency", value: cam?.last_inference_ms != null ? `${cam.last_inference_ms}ms` : "—", done: !!cam?.last_inference_ms },
+    { key: "capture", label: "capture", value: captured ? `${(cam?.frames ?? 0).toLocaleString()} fr` : "-", done: captured },
+    { key: "classify", label: "classify", value: d?.label || "-", done: classified },
+    { key: "route", label: "route", value: d?.category || "-", done: routed },
+    { key: "log", label: "log", value: logged ? "ok" : classified ? "<thr" : "-", done: logged },
+    { key: "latency", label: "latency", value: cam?.last_inference_ms != null ? `${cam.last_inference_ms}ms` : "-", done: !!cam?.last_inference_ms },
   ];
 }

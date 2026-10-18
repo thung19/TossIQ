@@ -91,7 +91,7 @@ export default function RecommendationsPage() {
                 <span className="dim">· {report.rules_run} rules</span>
               </>
             ) : (
-              <span className="dim">{error ? "unavailable — retrying" : "loading…"}</span>
+              <span className="dim">{error ? "unavailable, retrying" : "loading…"}</span>
             )}
           </span>
         }
@@ -99,7 +99,7 @@ export default function RecommendationsPage() {
 
       <div className="page">
         <section className="kpis">
-          <StatCard label="shown" value={report?.generated ?? "—"} />
+          <StatCard label="shown" value={report?.generated ?? "-"} />
           <StatCard
             label="projected saving"
             value={
@@ -107,7 +107,7 @@ export default function RecommendationsPage() {
                 ? `$${report.projected_annual_saving.toLocaleString(undefined, {
                     maximumFractionDigits: 0,
                   })}`
-                : "—"
+                : "-"
             }
             delta="per year, if acted on"
           />
@@ -118,11 +118,11 @@ export default function RecommendationsPage() {
                 ? report.projected_annual_co2e_kg >= 1000
                   ? `${(report.projected_annual_co2e_kg / 1000).toFixed(1)} t`
                   : `${Math.round(report.projected_annual_co2e_kg)} kg`
-                : "—"
+                : "-"
             }
             delta="CO₂e per year, estimated"
           />
-          <StatCard label="with money attached" value={report ? withMoney : "—"} />
+          <StatCard label="with money attached" value={report ? withMoney : "-"} />
         </section>
 
         <section className="controls">
@@ -222,7 +222,7 @@ export default function RecommendationsPage() {
               A finding is shown when it clears{" "}
               <b>${report.assumptions.min_annual_saving.toLocaleString()} a year</b> or{" "}
               <b>{report.assumptions.min_annual_co2e_kg} kg CO₂e a year</b>, or when it is a
-              service problem &mdash; an overflowing bin is worth fixing whatever it
+              service problem, an overflowing bin is worth fixing whatever it
               returns. Both thresholds are judgement calls sized for this deployment, not
               measured quantities.
               {report.suppressed_immaterial > 0 && (

@@ -210,7 +210,7 @@ function computeKpis(stats: StatsOverview | null, cam: CameraStats | null, event
     { label: "diverted", value: diverted, suffix: "%" },
     { label: "landfill", value: landfill },
     { label: "uncertain", value: uncertain },
-    { label: "inference", value: cam?.last_inference_ms ?? "—", suffix: cam?.last_inference_ms != null ? "ms" : undefined },
+    { label: "inference", value: cam?.last_inference_ms ?? "-", suffix: cam?.last_inference_ms != null ? "ms" : undefined },
     { label: "throughput", value: throughput, suffix: "/min" },
   ];
 }

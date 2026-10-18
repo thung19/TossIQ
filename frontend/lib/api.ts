@@ -734,6 +734,7 @@ export const SEVERITY_RANK: Record<HazardSeverity, number> = {
 export type InitiativeMetric =
   | "items"
   | "landfill_items"
+  | "landfill_mass"
   | "cost"
   | "mass"
   | "diversion_rate"
@@ -747,6 +748,9 @@ export type MetricSpec = {
   unit: string;
   format: "count" | "money" | "mass" | "percent";
   lower_is_better: boolean;
+  /** True for metrics that count items without regard to what they are.
+   * Only meaningful scoped to a single product. */
+  counts_mixed_items?: boolean;
   help: string;
 };
 
@@ -821,6 +825,10 @@ export type Initiative = {
    * on it. Rates and safety metrics are never flagged. */
   is_material: boolean;
   materiality_note: string | null;
+  /** Set when the chosen measure cannot mean what it says, which in
+   * practice means a COUNT over a slice holding more than one kind of
+   * thing. */
+  measurement_warning: string | null;
   /** Progress against the clock, not just against the target. "33% of the
    * way" says nothing alone: 33% with most of the year left is fine, 33%
    * with a fortnight to go is a goal about to be missed, and a goal with
@@ -856,6 +864,7 @@ export type InitiativeReport = {
   overdue: { initiative_id: number; name: string; days_overdue: number }[];
   immaterial: { initiative_id: number; name: string; note: string | null }[];
   undated: { initiative_id: number; name: string }[];
+  badly_measured: { initiative_id: number; name: string; note: string | null }[];
   behind_pace: {
     initiative_id: number;
     name: string;
@@ -896,12 +905,25 @@ export const PROJECT_STATUS_LABEL: Record<ProjectStatus, string> = {
   cancelled: "cancelled",
 };
 
+/**
+ * The period a window length reads as. "75/month" says what the goal is in
+ * one token; "75" with "per 30 days" somewhere else on the card makes the
+ * reader assemble it, and most will not.
+ */
+export function periodLabel(windowDays: number): string {
+  if (windowDays === 7) return "/week";
+  if (windowDays === 30) return "/month";
+  if (windowDays === 90) return "/quarter";
+  if (windowDays === 365) return "/year";
+  return `/${windowDays}d`;
+}
+
 /** Formats a metric value in its own units. */
 export function formatMetric(
   value: number | null | undefined,
   format: MetricSpec["format"]
 ): string {
-  if (value == null) return "—";
+  if (value == null) return "-";
   if (format === "money") {
     return `$${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
   }

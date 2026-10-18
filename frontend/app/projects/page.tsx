@@ -281,7 +281,7 @@ export default function ProjectsPage() {
         {shown.length === 0 ? (
           <p className="empty">
             {projects.length === 0
-              ? "No projects yet. A project is a specific action that moves an initiative — create one here, or from a card on the recommendations page."
+              ? "No projects yet. A project is a specific action that moves an initiative, create one here, or from a card on the recommendations page."
               : "No projects in this status."}
           </p>
         ) : grouped ? (
@@ -552,14 +552,14 @@ function ProjectRow({
           {project.expected_impact != null && (
             <span className="tag impact">
               claims {project.expected_impact.toLocaleString()}
-              {project.expected_impact_note ? ` — ${project.expected_impact_note}` : ""}
+              {project.expected_impact_note ? `, ${project.expected_impact_note}` : ""}
             </span>
           )}
         </span>
       </span>
       <span className="owner">{project.owner ?? "unassigned"}</span>
       <span className={`due ${late ? "late" : ""}`}>
-        {project.due_date ?? "—"}
+        {project.due_date ?? "-"}
         {late && <span className="late-tag">overdue</span>}
       </span>
       <select value={project.status} onChange={(e) => onStatus(project.project_id, e.target.value)}>

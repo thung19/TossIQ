@@ -92,7 +92,7 @@ export default function FleetFilters({
             <option value="">all models</option>
             {models.map((m) => (
               <option key={m.model_id} value={String(m.model_id)}>
-                {m.model_code} · fw {m.firmware_version ?? "—"}
+                {m.model_code} · fw {m.firmware_version ?? "-"}
               </option>
             ))}
           </select>

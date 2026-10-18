@@ -31,7 +31,7 @@ import "leaflet/dist/leaflet.css";
 // Esri publishes its tiles as {z}/{y}/{x}, the reverse of Leaflet's default
 // {z}/{x}/{y}, hence the swapped placeholders. OSM uses the normal order.
 const ESRI_ATTRIBUTION =
-  'Tiles &copy; <a href="https://www.esri.com/">Esri</a> &mdash; Esri, HERE, Garmin, &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+  'Tiles &copy; <a href="https://www.esri.com/">Esri</a> | Esri, HERE, Garmin, &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 
 export type BasemapKey = "satellite" | "streets" | "dark";
 
@@ -316,8 +316,8 @@ export default function CampusMap({
       const bucket = bucketLabel(bucketDay, bucketHour, dayNames);
       const title =
         mode === "activity"
-          ? `${can.can_code} — ${count} item${count === 1 ? "" : "s"} (${bucket}) — ${can.status}`
-          : `${can.can_code} — ${can.status}`;
+          ? `${can.can_code}, ${count} item${count === 1 ? "" : "s"} (${bucket}), ${can.status}`
+          : `${can.can_code}, ${can.status}`;
 
       L.marker([can.latitude, can.longitude], {
         icon: L.divIcon({

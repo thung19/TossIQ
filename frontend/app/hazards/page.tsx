@@ -114,7 +114,7 @@ export default function HazardsPage() {
                 <span className="dim">· {summary.total} flagged in {days}d</span>
               </>
             ) : (
-              <span className="dim">{error ? "unavailable — retrying" : "loading…"}</span>
+              <span className="dim">{error ? "unavailable, retrying" : "loading…"}</span>
             )}
           </span>
         }
@@ -127,18 +127,18 @@ export default function HazardsPage() {
             value={criticalOutstanding}
             delta={criticalOutstanding > 0 ? "fire or injury risk" : "none open"}
           />
-          <StatCard label="all outstanding" value={summary?.outstanding ?? "—"} />
+          <StatCard label="all outstanding" value={summary?.outstanding ?? "-"} />
           <StatCard
             label="past response window"
-            value={summary?.overdue.length ?? "—"}
+            value={summary?.overdue.length ?? "-"}
             delta="unacknowledged too long"
           />
           <StatCard
             label="recurring locations"
-            value={summary?.recurring.length ?? "—"}
+            value={summary?.recurring.length ?? "-"}
             delta="same hazard, same building"
           />
-          <StatCard label="flagged total" value={summary?.total ?? "—"} suffix="" />
+          <StatCard label="flagged total" value={summary?.total ?? "-"} suffix="" />
         </section>
 
         {summary && (summary.overdue.length > 0 || summary.recurring.length > 0) && (
@@ -167,7 +167,7 @@ export default function HazardsPage() {
                 </span>
                 <span className="alert-detail">
                   across {item.cans} can{item.cans === 1 ? "" : "s"}. Collecting each one will
-                  not stop the next &mdash; this building needs a collection point or signage.
+                  not stop the next, this building needs a collection point or signage.
                 </span>
               </article>
             ))}
@@ -248,11 +248,11 @@ export default function HazardsPage() {
                       <span className="where">
                         <span className="building">{event.building_name ?? "unattributed"}</span>
                         <span className="spot">
-                          {event.can_code ?? event.location ?? "—"}
+                          {event.can_code ?? event.location ?? "-"}
                           {event.placement_note ? ` · ${event.placement_note}` : ""}
                         </span>
                       </span>
-                      <span className="when">{event.created_at ?? "—"}</span>
+                      <span className="when">{event.created_at ?? "-"}</span>
                       <span className="state">
                         {event.acknowledged_at ? (
                           <span className="ok">handled</span>

@@ -35,7 +35,7 @@ export default function SessionPanel({
         <KV k="frames" v={stats.frames.toLocaleString()} />
         <KV k="items" v={stats.itemsPersisted.toLocaleString()} />
         <KV k="uncertain" v={stats.uncertain.toLocaleString()} />
-        <KV k="inference" v={cameraStats?.last_inference_ms != null ? `${cameraStats.last_inference_ms}ms` : "—"} />
+        <KV k="inference" v={cameraStats?.last_inference_ms != null ? `${cameraStats.last_inference_ms}ms` : "-"} />
         <KV k="camera" v={cameraStats?.camera_opened ? "open" : "closed"} />
       </dl>
 
@@ -218,7 +218,7 @@ function pad(n: number) {
 }
 
 function shortTime(raw: string | null): string {
-  if (!raw) return "—";
+  if (!raw) return "-";
   const parts = raw.split(" ");
   return parts.length === 2 ? parts[1].slice(0, 5) : raw.slice(-5);
 }

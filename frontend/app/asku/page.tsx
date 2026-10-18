@@ -42,7 +42,7 @@ export default function AskuPage() {
           mean rather than referring back to &ldquo;that bin&rdquo; or &ldquo;it&rdquo;.
         </p>
         <p className="preamble dim">
-          The same assistant is docked on the right of every page &mdash; press{" "}
+          The same assistant is docked on the right of every page, press{" "}
           <kbd>⌘I</kbd> to ask without leaving what you are looking at. That panel keeps its own
           transcript.
         </p>

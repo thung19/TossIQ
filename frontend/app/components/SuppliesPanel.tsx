@@ -81,12 +81,12 @@ export default function SuppliesPanel({
               <tr key={row.sku}>
                 <td className="sku">{row.sku}</td>
                 <td className="name">
-                  {row.product_name ?? "—"}
+                  {row.product_name ?? "-"}
                   {row.variant_label && <span className="variant">{row.variant_label}</span>}
                 </td>
-                <td className="dim">{row.supplier ?? "—"}</td>
+                <td className="dim">{row.supplier ?? "-"}</td>
                 <td className="dim">
-                  {row.material ?? "—"}
+                  {row.material ?? "-"}
                   {row.material_subtype && (
                     <span className="variant">{row.material_subtype}</span>
                   )}
@@ -95,7 +95,7 @@ export default function SuppliesPanel({
                   {row.correct_bin ? (
                     <span className={`pill ${row.correct_bin}`}>{row.correct_bin}</span>
                   ) : (
-                    <span className="dim">—</span>
+                    <span className="dim">-</span>
                   )}
                 </td>
                 <td className="n strong">{row.count.toLocaleString()}</td>
@@ -105,11 +105,11 @@ export default function SuppliesPanel({
                       {row.cases_equivalent.toFixed(2)}
                     </span>
                   ) : (
-                    <span className="dim">—</span>
+                    <span className="dim">-</span>
                   )}
                 </td>
                 <td className="n dim">
-                  {row.unit_cost != null ? `$${row.unit_cost.toFixed(3)}` : "—"}
+                  {row.unit_cost != null ? `$${row.unit_cost.toFixed(3)}` : "-"}
                   {row.unit_weight_grams != null && (
                     <span className="variant">{row.unit_weight_grams} g</span>
                   )}
@@ -133,7 +133,7 @@ export default function SuppliesPanel({
       <footer>
         Unit cost is the loss from discarding, which is $0 for consumed residue such as peels
         and spent grounds. Mass is the catalog&rsquo;s reference weight per unit, multiplied by
-        the count &mdash; no can has a weight sensor, so nothing here is weighed.
+        the count, no can has a weight sensor, so nothing here is weighed.
         {measure !== "count" && " Totals follow the measure selected above."}
       </footer>
     </section>

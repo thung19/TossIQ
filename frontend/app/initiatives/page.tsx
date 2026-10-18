@@ -174,7 +174,7 @@ export default function InitiativesPage() {
                 <span className="dim">· {report.total} total</span>
               </>
             ) : (
-              <span className="dim">{error ? "unavailable — retrying" : "loading…"}</span>
+              <span className="dim">{error ? "unavailable, retrying" : "loading…"}</span>
             )}
           </span>
         }
@@ -182,21 +182,21 @@ export default function InitiativesPage() {
 
       <div className="page">
         <section className="kpis">
-          <StatCard label="active goals" value={activeCount || "—"} />
-          <StatCard label="achieved" value={report?.achieved ?? "—"} />
+          <StatCard label="active goals" value={activeCount || "-"} />
+          <StatCard label="achieved" value={report?.achieved ?? "-"} />
           <StatCard
             label="losing ground"
-            value={report?.regressing ?? "—"}
+            value={report?.regressing ?? "-"}
             delta={report && report.regressing > 0 ? "worse than baseline" : undefined}
           />
           <StatCard
             label="no projects yet"
-            value={report?.unbacked.length ?? "—"}
+            value={report?.unbacked.length ?? "-"}
             delta="goals with no work behind them"
           />
           <StatCard
             label="behind pace"
-            value={report?.behind_pace.length ?? "—"}
+            value={report?.behind_pace.length ?? "-"}
             delta="won't land on current rate"
           />
         </section>
@@ -339,11 +339,18 @@ export default function InitiativesPage() {
             </div>
 
             {spec && <p className="help">{spec.help}</p>}
+            {spec?.counts_mixed_items && !form.scope_object && (
+              <p className="help warn-inline">
+                This counts items without regard to what they are, so it treats a crisp
+                packet and a glass bottle alike. Pick an Item below to scope it to one
+                product, or switch to a mass measure.
+              </p>
+            )}
             <p className="help dim">
               The baseline is measured from the last 30 days when you save, not entered here.
               A starting point you can type is a starting point you can flatter. If the slice
               you pick turns out to produce almost nothing, the goal is flagged rather than
-              shown as a tidy percentage &mdash; a target that noise can hit is not a target.
+              shown as a tidy percentage, a target that noise can hit is not a target.
             </p>
             <p className="help dim">
               Every figure is a rate over the window you choose: a target of 120 means 120 per
@@ -361,6 +368,16 @@ export default function InitiativesPage() {
               </button>
             </div>
           </section>
+        )}
+
+        {report && report.badly_measured.length > 0 && (
+          <p className="nudge">
+            {report.badly_measured.length} goal
+            {report.badly_measured.length === 1 ? " counts" : "s count"} items without
+            saying what they are:{" "}
+            {report.badly_measured.map((item) => item.name).join(", ")}. Scope to one
+            product, or measure mass.
+          </p>
         )}
 
         {report && report.undated.length > 0 && (
@@ -397,7 +414,7 @@ export default function InitiativesPage() {
         ) : initiatives.length === 0 ? (
           <p className="empty">
             No goals yet. Create one and TossIQ will measure it against logged disposals from
-            then on &mdash; pick what to measure, over which slice of the campus, and what you
+            then on, pick what to measure, over which slice of the campus, and what you
             are aiming for.
           </p>
         ) : (
@@ -535,6 +552,9 @@ export default function InitiativesPage() {
         }
         .help.dim {
           color: var(--text-dim);
+        }
+        .help.warn-inline {
+          color: var(--status-in-progress);
         }
         .form-actions {
           display: flex;

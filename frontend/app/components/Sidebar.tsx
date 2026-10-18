@@ -174,7 +174,7 @@ export default function Sidebar({
           <div className="footer-row">
             <span className="live-dot spacer" />
             <span className="k">inference</span>
-            <span className="v">{lastInferenceMs != null ? `${lastInferenceMs} ms` : "—"}</span>
+            <span className="v">{lastInferenceMs != null ? `${lastInferenceMs} ms` : "-"}</span>
           </div>
         </div>
         <AccountMenu />

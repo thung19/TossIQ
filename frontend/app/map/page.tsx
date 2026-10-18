@@ -219,17 +219,17 @@ export default function CampusMapPage() {
 
       <div className="page">
         <section className="kpi-row">
-          <StatCard label="fleet" value={summary?.total ?? "—"} />
+          <StatCard label="fleet" value={summary?.total ?? "-"} />
           {STATUS_ORDER.map((status) => (
             <StatCard
               key={status}
               label={STATUS_LABEL[status]}
-              value={summary?.by_status[status] ?? "—"}
+              value={summary?.by_status[status] ?? "-"}
             />
           ))}
           <StatCard
             label="threshold"
-            value={summary?.service_threshold_percent ?? "—"}
+            value={summary?.service_threshold_percent ?? "-"}
             suffix="%"
           />
         </section>

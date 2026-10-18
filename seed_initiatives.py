@@ -55,13 +55,19 @@ INITIATIVES = [
         ("absolute", 75.0), 0.88, 270, 70,
     ),
     (
-        "Halve landfill volume at Rand Hall",
-        "Rand is the busiest dining building and sets the pattern the other "
-        "servery sites copy. Prove it there first.",
-        "dining-ops@vanderbilt.edu",
-        "landfill_items", "reduce",
-        {"scope_building": "VU-RAND"},
-        ("factor", 0.5), 1.55, 150, 60,
+        # Campus-wide rather than one building. Scoped to Rand this measured
+        # 1.1 kg a month and the materiality guard rightly refused it: what
+        # reaches a landfill bin here is wrappers, straws and foam, while the
+        # heavy things go to recycling. Weight is the right measure for
+        # general waste, but it needs the whole campus behind it.
+        "Cut landfill weight by a third campus-wide",
+        "Total weight of what reaches a landfill bin. Measured by weight rather "
+        "than item count: a count treats a crisp packet and a glass bottle alike "
+        "and moves when the mix changes rather than the amount.",
+        "sustainability@vanderbilt.edu",
+        "landfill_mass", "reduce",
+        {},
+        ("factor", 0.66), 1.45, 150, 60,
     ),
     (
         # Named for the window it is actually measured over. The first
@@ -143,12 +149,12 @@ PROJECTS = [
      "dining-ops@vanderbilt.edu", "done", None, None,
      "material:DISP-STR-PP8", -20),
 
-    ("Halve landfill volume at Rand Hall",
+    ("Cut landfill weight by a third campus-wide",
      "Move the quiet Rand bins onto the traffic filling VU-RAND-02",
      "VU-RAND-02 is at 96% while VU-RAND-01 sits at 1% in the same building.",
      "facilities-ops@vanderbilt.edu", "in_progress", None, None,
      "rebalance:Rand Hall", 30),
-    ("Halve landfill volume at Rand Hall",
+    ("Cut landfill weight by a third campus-wide",
      "Add a compost bin at the Rand servery exit",
      "Most of what leaves the servery is compostable and there is nowhere to put it.",
      "dining-ops@vanderbilt.edu", "blocked", None,

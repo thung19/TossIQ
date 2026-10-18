@@ -422,5 +422,73 @@ class HorizonRollupTests(unittest.TestCase):
         self.assertIn("per 30 days", self.listing([])["note"])
 
 
+class MeasurementWarningTests(unittest.TestCase):
+    """Counting undifferentiated rubbish is not a measurement of anything.
+    "Cut items to landfill from 233 to 75" sounds precise and is not: the
+    number moves when the mix changes rather than the amount, and nobody
+    can say whether 75 crisp packets beats 60 bottles."""
+
+    def test_a_count_over_mixed_rubbish_is_flagged(self):
+        note = initiatives.measurement_warning(goal(metric="landfill_items"))
+        self.assertIsNotNone(note)
+        self.assertIn("mass", note)
+
+    def test_a_count_scoped_to_one_product_is_fine(self):
+        """Every unit is the same object, so counting them means something."""
+        self.assertIsNone(
+            initiatives.measurement_warning(
+                goal(metric="items", scope_object="plastic water bottle")
+            )
+        )
+
+    def test_a_supplier_scope_also_makes_a_count_meaningful(self):
+        self.assertIsNone(
+            initiatives.measurement_warning(goal(metric="items", scope_supplier="Frito-Lay"))
+        )
+
+    def test_a_building_scope_alone_does_not_rescue_a_count(self):
+        """One building's rubbish is still every kind of rubbish."""
+        self.assertIsNotNone(
+            initiatives.measurement_warning(goal(metric="items", scope_building_id=4))
+        )
+
+    def test_mass_is_never_flagged(self):
+        for metric in ("mass", "landfill_mass"):
+            self.assertIsNone(initiatives.measurement_warning(goal(metric=metric)), metric)
+
+    def test_rates_and_money_are_never_flagged(self):
+        for metric in ("cost", "diversion_rate", "contamination_rate", "food_waste_cost"):
+            self.assertIsNone(initiatives.measurement_warning(goal(metric=metric)), metric)
+
+    def test_the_verdict_reaches_the_card(self):
+        with mock.patch.object(initiatives, "measure", return_value=70.0):
+            result = initiatives.resolve(goal(metric="landfill_items"), [], {}, now=NOW)
+        self.assertIsNotNone(result["measurement_warning"])
+
+    def test_badly_measured_goals_are_rolled_up_for_the_nudge(self):
+        with mock.patch.object(initiatives.db, "list_initiatives",
+                               return_value=[goal(metric="landfill_items")]), \
+             mock.patch.object(initiatives.db, "list_projects", return_value=[]), \
+             mock.patch.object(initiatives.db, "list_buildings", return_value=[]), \
+             mock.patch.object(initiatives, "measure", return_value=70.0):
+            result = initiatives.list_resolved(now=NOW)
+        self.assertEqual(len(result["badly_measured"]), 1)
+
+
+class LandfillMassTests(unittest.TestCase):
+    def test_it_forces_the_landfill_bin_and_returns_kilograms(self):
+        with mock.patch.object(
+            initiatives.db, "analytics_totals",
+            return_value={"matched_grams": 40_000.0, "class_grams": 2_000.0},
+        ) as query:
+            value = initiatives.measure(goal(metric="landfill_mass"))
+        self.assertEqual(value, 42.0)
+        self.assertEqual(query.call_args.kwargs["category"], "landfill")
+
+    def test_its_help_explains_why_it_beats_a_count(self):
+        help_text = initiatives.METRICS["landfill_mass"]["help"]
+        self.assertIn("crisp packet", help_text)
+
+
 if __name__ == "__main__":
     unittest.main()

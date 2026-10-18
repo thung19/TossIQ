@@ -1,6 +1,6 @@
 "use client";
 
-import { PACE_LABEL, formatMetric, type Initiative } from "../../lib/api";
+import { PACE_LABEL, formatMetric, periodLabel, type Initiative } from "../../lib/api";
 
 /**
  * One goal, with the distance it has actually travelled.
@@ -34,6 +34,7 @@ export default function InitiativeCard({
 
   // Where the current value sits between baseline and target, clamped for
   // drawing only -- the number beside it is never clamped.
+  const period = periodLabel(initiative.baseline_window_days);
   const percent = initiative.progress_percent ?? 0;
   const drawn = Math.max(0, Math.min(100, percent));
   const regressing = percent < 0;
@@ -48,6 +49,11 @@ export default function InitiativeCard({
           <span className="scope">{initiative.scope_label}</span>
           {initiative.status !== "active" && (
             <span className="status-tag">{initiative.status}</span>
+          )}
+          {initiative.measurement_warning && (
+            <span className="too-small" title={initiative.measurement_warning}>
+              counts mixed items
+            </span>
           )}
           {!initiative.is_material && (
             <span className="too-small" title={initiative.materiality_note ?? undefined}>
@@ -65,12 +71,14 @@ export default function InitiativeCard({
         </span>
 
         <h3>{initiative.name}</h3>
+        {/* The period rides on the number itself. "381 to 117" with the
+            window printed separately reads as a running total, and a
+            reader has to assemble the rate from two places to understand
+            the goal at all. */}
         <p className="metric-line">
-          {initiative.metric_label} &mdash; {initiative.direction === "reduce" ? "reduce" : "lift"}{" "}
-          from <b>{formatMetric(baseline, format)}</b> to <b>{formatMetric(target, format)}</b>{" "}
-          {/* Every figure here is a rate. Without the period, "381 to 117"
-              reads as a running total and the goal means nothing. */}
-          <span className="per">per {initiative.baseline_window_days} days</span>
+          {initiative.metric_label}, {initiative.direction === "reduce" ? "reduce" : "lift"}{" "}
+          from <b>{formatMetric(baseline, format)}{period}</b> to{" "}
+          <b>{formatMetric(target, format)}{period}</b>
         </p>
 
         <span className="bar-wrap">
@@ -81,14 +89,14 @@ export default function InitiativeCard({
             />
           </span>
           <span className="bar-ends">
-            <span>{formatMetric(baseline, format)}</span>
+            <span>{formatMetric(baseline, format)}{period}</span>
             <span className={`now ${regressing ? "bad" : ""}`}>
-              now {formatMetric(current, format)}
+              now {formatMetric(current, format)}{period}
               {initiative.progress_percent != null && (
                 <b> · {initiative.progress_percent.toFixed(0)}%</b>
               )}
             </span>
-            <span>{formatMetric(target, format)}</span>
+            <span>{formatMetric(target, format)}{period}</span>
           </span>
         </span>
 
@@ -105,8 +113,13 @@ export default function InitiativeCard({
             </span>
           ) : initiative.projected_hits_target === false ? (
             <span className="bad">
-              At this rate, lands at <b>{formatMetric(initiative.projected_value, format)}</b> by{" "}
-              {initiative.target_date} &mdash; short of {formatMetric(target, format)}
+              At this rate, lands at{" "}
+              <b>
+                {formatMetric(initiative.projected_value, format)}
+                {period}
+              </b>{" "}
+              by {initiative.target_date}, short of {formatMetric(target, format)}
+              {period}
             </span>
           ) : (
             <span className="dim">Too early to forecast an outcome</span>
@@ -121,7 +134,7 @@ export default function InitiativeCard({
 
         <span className="foot">
           {initiative.project_count === 0 ? (
-            <span className="warn">no projects yet &mdash; this is a wish, not a plan</span>
+            <span className="warn">no projects yet, this is a wish, not a plan</span>
           ) : (
             <span>
               {initiative.projects_done} of {initiative.project_count} project
@@ -136,6 +149,9 @@ export default function InitiativeCard({
       {expanded && (
         <div className="body">
           {initiative.description && <p className="desc">{initiative.description}</p>}
+          {initiative.measurement_warning && (
+            <p className="small-warn">{initiative.measurement_warning}</p>
+          )}
           {!initiative.is_material && initiative.materiality_note && (
             <p className="small-warn">{initiative.materiality_note}</p>
           )}
@@ -179,8 +195,7 @@ export default function InitiativeCard({
               projects
               {initiative.claimed_impact > 0 && (
                 <span className="claimed">
-                  {formatMetric(initiative.claimed_impact, format)} claimed by work under way
-                  &mdash; an estimate, not counted towards the measured figure above
+                  {formatMetric(initiative.claimed_impact, format)} claimed by work under way, an estimate, not counted towards the measured figure above
                 </span>
               )}
             </header>
@@ -201,7 +216,7 @@ export default function InitiativeCard({
                       <span className="from-rec">from a recommendation</span>
                     )}
                   </span>
-                  <span className="pdue">{project.due_date ?? "—"}</span>
+                  <span className="pdue">{project.due_date ?? "-"}</span>
                   <select
                     value={project.status}
                     onChange={(e) => onProjectStatus(project.project_id, e.target.value)}

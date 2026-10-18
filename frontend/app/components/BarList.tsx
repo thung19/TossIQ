@@ -74,8 +74,8 @@ export default function BarList({
             onClick={onSelect ? () => onSelect(row.bucket) : undefined}
             title={
               measure === "count"
-                ? `${row.bucket} — ${row.count} items`
-                : `${row.bucket} — ${formatMeasure(value, measure)} across ${row.count} items; ` +
+                ? `${row.bucket}, ${row.count} items`
+                : `${row.bucket}, ${formatMeasure(value, measure)} across ${row.count} items; ` +
                   `${row.matched_count} matched to a specific product`
             }
           >

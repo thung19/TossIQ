@@ -40,7 +40,7 @@ export default function FillBar({
       </div>
       {showLabel && (
         <div className="meta">
-          <span className="pct">{known ? `${clamped.toFixed(0)}%` : "—"}</span>
+          <span className="pct">{known ? `${clamped.toFixed(0)}%` : "-"}</span>
           <span className="src">
             {source === "observed" || source === "simulated" ? source : "no fill signal"}
           </span>

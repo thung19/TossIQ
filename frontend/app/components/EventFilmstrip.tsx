@@ -34,7 +34,7 @@ export default function EventFilmstrip({ events }: { events: WasteEvent[] }) {
               <span className="c item">{e.detected_object || "unknown"}</span>
               <span className="c cat">{e.category || "unknown"}</span>
               <span className="c num conf">{formatConf(e.confidence)}</span>
-              <span className="c loc">{e.location || "—"}</span>
+              <span className="c loc">{e.location || "-"}</span>
               <span className="c num time">{shortTime(e.created_at)}</span>
             </div>
           ))}
@@ -135,13 +135,13 @@ export default function EventFilmstrip({ events }: { events: WasteEvent[] }) {
 }
 
 function formatConf(c: number | null): string {
-  if (c == null) return "—";
+  if (c == null) return "-";
   const v = c > 1 ? c : c * 100;
   return `${v.toFixed(0)}%`;
 }
 
 function shortTime(iso: string | null): string {
-  if (!iso) return "—";
+  if (!iso) return "-";
   const parts = iso.split(" ");
   return parts.length === 2 ? parts[1].slice(0, 8) : iso.slice(-8);
 }
